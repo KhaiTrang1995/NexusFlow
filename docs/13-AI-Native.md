@@ -29,8 +29,8 @@
 > user's assembly, and a call reaches the same `FlowEngine.ExecuteAsync` an HTTP
 > request reaches, with the agent's principal on the invocation. §6 below is what
 > ships, with one exception it names: `inputSchema` carries the contract's identity
-> rather than a `$ref`, because the `schemas` map it would point into is still one
-> of the thirteen unwritten fields.
+> rather than a `$ref`, because the `schemas` map it would point into left the
+> committed schema on 2026-08-15 rather than gaining a producer.
 >
 > Everything past §2 is **P8**, gated behind the manifest v1.0 freeze. The point
 > of writing it now is that each consumer is a constraint on what the manifest
@@ -39,12 +39,18 @@
 > *This paragraph used the freeze as a date and never said when it falls, and so did every
 > other document that named it.*
 > [**ADR-0017**](adr/ADR-0017-manifest-v1-freeze-criteria.md) *now states the eight
-> conditions, none of which holds today. Two bear directly on §3 below: thirteen fields
-> the committed schema declares are written by nothing — including the top-level `schemas`
-> map that every contract-shaped consumer in §4 would be generated from — and
-> `event.schemaVersion` is emitted as the literal* `"1.0.0"` *for every event. The Guarantees
-> list under §3 also claims "every node carries `source` and `owner`": no capability entry
-> carries either.*
+> conditions.* ***Six of the eight hold as of 2026-08-15**, and the settlement changed §3
+> below in a way a reader has to know about: of the thirteen fields the committed schema
+> declared and nothing wrote, four gained a producer and nine — including the top-level
+> `schemas` map that every contract-shaped consumer in §4 would be generated from — **left
+> the schema**. F1's terms were produce or delete, and delete is what was honest for a
+> generator nobody has written. **The document below still draws them**, because it is what
+> the manifest is meant to become rather than what it emits, and a worked example that
+> shrank to today's output would stop being the constraint on the consumers it exists to
+> state. Read the JSON in §3 as the target; `schemas/flowx.manifest.schema.json` is the
+> contract. What still does not hold is* `event.schemaVersion`, *emitted as the literal*
+> `"1.0.0"` *for every event — ADR-0017's F2, and the one criterion the freeze is still
+> waiting on.*
 
 ---
 
@@ -189,7 +195,11 @@ Guarantees:
 - **Versioned** — the schema itself has a SemVer; consumers pin a major.
 - **Structure only** — no secrets, no business data. CI scans emitted manifests
   for secret patterns (`ManifestContainsNoSecrets`).
-- **Traceable** — every node carries `source` (file:line) and `owner`.
+- **Traceable** — every flow and every capability carries `source` (file:line).
+  *This said "and `owner`" until 2026-08-15, when `owner` left the schema: nothing declares
+  one, and ADR-0017 F1 does not let a field with no producer be frozen. The capability half
+  of `source` was written the same day, so the sentence became half true and half wrong in
+  one commit.*
 
 ---
 
@@ -285,9 +295,11 @@ integration.
 Two departures from the descriptor this section first drew, both forced:
 
 - **`inputSchema` is an open object naming the contract, not a `$ref`.** The
-  top-level `schemas` map is one of the fields the committed schema declares and
-  nothing writes ([ADR-0017](adr/ADR-0017-manifest-v1-freeze-criteria.md)), so
-  there is nothing to point at. Generating one by reflecting over the contract
+  top-level `schemas` map was one of the fields the committed schema declared and
+  nothing wrote, and on 2026-08-15 it **left the schema** rather than gaining a
+  producer ([ADR-0017](adr/ADR-0017-manifest-v1-freeze-criteria.md) F1), so there
+  is nothing to point at and no declaration promising there will be.
+  Generating one by reflecting over the contract
   would supply the missing field from a second source — published to agents,
   unversioned, and outside `flowx diff` — which is the defect this whole section
   exists to avoid. When `schemas` is written the `$ref` appears and nothing else

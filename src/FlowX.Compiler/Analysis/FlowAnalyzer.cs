@@ -1522,7 +1522,10 @@ public static class FlowAnalyzer
             info.OutputTypeName,
             mapping?.Text,
             mapping?.TypeName,
-            mapping?.Location);
+            mapping?.Location,
+            info.ApprovedBy,
+            info.Deprecated,
+            info.DeclarationLocation);
     }
 
     /// <summary>
@@ -2121,7 +2124,10 @@ public static class FlowAnalyzer
             info.AuthorizationMode,
             info.AuthorizationValue,
             info.InputTypeName,
-            info.OutputTypeName));
+            info.OutputTypeName,
+            approvedBy: info.ApprovedBy,
+            deprecated: info.Deprecated,
+            capabilitySource: info.DeclarationLocation));
 
         // The policy may already be on the step: `.WithPolicy(...).CompensateWith<T>()` is
         // as legal as the order the samples use, because both calls return IStepBuilder.
@@ -2271,7 +2277,10 @@ public static class FlowAnalyzer
                 info.AuthorizationMode,
                 info.AuthorizationValue,
                 info.InputTypeName,
-                info.OutputTypeName);
+                info.OutputTypeName,
+                approvedBy: info.ApprovedBy,
+                deprecated: info.Deprecated,
+                capabilitySource: info.DeclarationLocation);
         }
 
         return null;
@@ -2941,7 +2950,14 @@ public static class FlowAnalyzer
         return identity.Contains(".") ? identity : "event." + identity;
     }
 
-    private static string? FormatLocation(Location location)
+    /// <summary><c>file:line</c> of a source location, or <c>null</c> when it has none.</summary>
+    /// <remarks>
+    /// Internal rather than private so <c>CapabilityReader</c> can spell a capability's
+    /// declaration the same way this spells a call site. A second formatter would be a
+    /// second notion of what a <c>sourceRef</c> looks like, in a document whose consumers
+    /// parse the string.
+    /// </remarks>
+    internal static string? FormatLocation(Location? location)
     {
         if (location is null || !location.IsInSource)
         {

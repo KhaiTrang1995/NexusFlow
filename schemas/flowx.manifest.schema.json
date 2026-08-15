@@ -38,19 +38,8 @@
         "$ref": "#/$defs/event"
       }
     },
-    "policies": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/policySet"
-      }
-    },
-    "schemas": {
-      "description": "JSON Schema for every contract type, referenced by $ref from inputs and outputs. Drives OpenAPI, AsyncAPI, MCP tool descriptors and validation from one source.",
-      "type": "object",
-      "additionalProperties": true
-    },
     "extensions": {
-      "description": "Custom metadata. Exists so a one-off need never forces a breaking change to this schema.",
+      "description": "Custom metadata. Exists so a one-off need never forces a breaking change to this schema (ADR-0005). The compiler never writes it and `flowx diff` never reports a change inside it (22-CLI §2.2): the keys belong to whoever added them, and FlowX cannot classify the severity of a change to a field whose meaning it does not know. Every CLI verb tolerates one.",
       "type": "object",
       "additionalProperties": true
     }
@@ -87,13 +76,6 @@
         },
         "version": {
           "$ref": "#/$defs/semver"
-        },
-        "commit": {
-          "type": "string"
-        },
-        "builtAt": {
-          "type": "string",
-          "format": "date-time"
         }
       }
     },
@@ -158,9 +140,6 @@
             "type": "string"
           }
         },
-        "owner": {
-          "type": "string"
-        },
         "source": {
           "$ref": "#/$defs/sourceRef"
         }
@@ -176,10 +155,6 @@
         "type": {
           "description": "Fully-qualified CLR type name.",
           "type": "string"
-        },
-        "schema": {
-          "description": "JSON Schema or a $ref into /schemas.",
-          "type": "object"
         },
         "sensitive": {
           "description": "Members of this contract carrying [Sensitive]. Present only when the contract has at least one, so a contract with no secrets is unchanged by this field existing. Declarative: it records which members carry secrets, and does not itself redact.",
@@ -379,7 +354,7 @@
               "type": "string"
             },
             "approvedBy": {
-              "description": "Required when mode is Public.",
+              "description": "The reviewer named by [ApprovedBy] on the capability. Required when mode is Public, and read from the same declaration PublicCapabilitiesAreReviewed checks — so the document carries the review rather than asserting that one happened somewhere.",
               "type": "string"
             }
           }
@@ -422,9 +397,7 @@
           }
         },
         "deprecated": {
-          "type": "string"
-        },
-        "owner": {
+          "description": "The obsoletion notice declared by [Obsolete(\"...\")] on the capability, so a consumer learns what to migrate to from the document rather than from a compiler warning it never sees. Absent when the type carries no notice: a bare [Obsolete] declares no sentence to publish, and an invented one is worse than none.",
           "type": "string"
         },
         "source": {
@@ -446,21 +419,21 @@
         "schemaVersion": {
           "$ref": "#/$defs/semver"
         },
-        "partitionKey": {
-          "description": "Ordering is guaranteed per key only \u2014 never globally.",
-          "type": "string"
-        },
         "producedBy": {
+          "description": "Business identities of the flows in this application whose .Emit<T>() produces this event. The inverse index of each flow's `emits`, kept here because both ends of an event are flows and this is the only place they meet.",
           "type": "array",
           "items": {
-            "type": "string"
-          }
+            "$ref": "#/$defs/identity"
+          },
+          "uniqueItems": true
         },
         "consumedBy": {
+          "description": "Business identities of the flows in this application started by a Bus trigger whose topic is this event. Scoped to this application on purpose: a subscriber in another build belongs to that build's manifest, and this document never guesses at one.",
           "type": "array",
           "items": {
-            "type": "string"
-          }
+            "$ref": "#/$defs/identity"
+          },
+          "uniqueItems": true
         }
       }
     },
@@ -470,6 +443,7 @@
         "kind",
         "stage"
       ],
+      "additionalProperties": false,
       "properties": {
         "kind": {
           "type": "string"
@@ -485,25 +459,6 @@
             "Execution",
             "Consistency"
           ]
-        }
-      }
-    },
-    "policySet": {
-      "type": "object",
-      "required": [
-        "name",
-        "policies"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "policies": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/policy"
-          }
         }
       }
     }

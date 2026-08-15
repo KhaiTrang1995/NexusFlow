@@ -127,8 +127,12 @@ ignore the output.
 
 | Ignored | Why |
 |---|---|
-| `source` (file:line) | moves whenever anyone edits above a declaration; it is navigation metadata |
-| `application.version`, `commit`, `builtAt` | they change on every release by design |
+| `source` (file:line), on a flow and on a capability | moves whenever anyone edits above a declaration; it is navigation metadata |
+| `application.version` | it changes on every release by design. `commit` and `builtAt` were listed here too until 2026-08-15, when both left the schema: nothing in a deterministic build produces either, and a field no producer can fill and no rule may report is a column of nulls a consumer cannot distinguish from a fact |
+| a trigger's `group` and `description` | neither is part of the flow's address — `Describe` keys a trigger on `kind`, `method`, `route`, `transport`, `topic` and `cron` — so a change to one is a change to *how* the platform drains or narrates an endpoint that still answers on the same terms. **Found by `ManifestFieldCoverageTests` rather than by hand**, and recorded here rather than graded: whether a consumer-group rename deserves a code of its own is a severity question, and this table is the honest answer until somebody takes it |
+| `capability.authorization.approvedBy` | who reviewed a `Public` stance is a fact about the review, not about who may invoke the capability — that is `mode` and `value`, and `FLOWX-DIFF-014` and `015` already classify both |
+| an event's `producedBy` and `consumedBy` | both are indexes the compiler derives from facts already compared: `producedBy` inverts each flow's `emits`, and `consumedBy` inverts its `Bus` triggers, which `FLOWX-DIFF-005` and `103` report. Diffing an index as well as its source reports every change twice |
+| `extensions` | the keys are whoever added them; FlowX cannot say whether a change to a field whose meaning it does not know is breaking. **This is the classification [ADR-0005](adr/ADR-0005-manifest-as-build-artifact.md)'s escape hatch needs to be usable** — a hatch whose contents blocked a merge on an unclassifiable finding would not be one |
 | a flow's `steps`, **except** an `AwaitSignal` step's `signal` and `timeout` | every other step describes what the flow *does*, and refactoring that is what FlowX exists to make safe. A wait describes what the flow **requires from outside** — the identity a sender addresses to continue it — which is the same kind of fact as a `trigger` and is compared for the same reason ([ADR-0021 §2.4](adr/ADR-0021-manifest-publishes-the-wait.md)). Moving a wait behind a `When`, or changing the steps around it, still reports nothing |
 | a flow's `emits` and `errors` | both are aggregated by the compiler from steps and capabilities; the same facts appear once more, with versions, in `events` and each capability's `errors` |
 | array order anywhere | every list is compared as a set |

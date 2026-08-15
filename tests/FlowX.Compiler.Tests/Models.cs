@@ -288,6 +288,82 @@ internal static class Models
                 2, "Sample.Capabilities.StartOnboarding", "onboarding.start", "1.0.0", isIdempotent: true),
         ]);
 
+    /// <summary>
+    /// A flow declaring every field the schema has that the other fixtures leave out.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The corpus fixture for ADR-0017 F1.</strong> <c>EveryFieldTheSchemaDeclaresIsWritten</c>
+    /// asks whether each declared field appears in at least one manifest, and the answer is
+    /// only worth having if some manifest is trying: a corpus assembled from flows that
+    /// happen not to use a field cannot tell "unused here" from "no producer anywhere",
+    /// which is the confusion the criterion exists to end.
+    /// </para>
+    /// <para>
+    /// So this one is deliberately unrealistic. It carries a reviewed <c>Public</c>
+    /// capability, an obsolete one, a permissioned one, a policied step, a fallback,
+    /// sensitive members on both contracts, a declaration location, and an event whose
+    /// identity is also the topic of its own <c>Bus</c> trigger — a flow that subscribes to
+    /// what the application emits, which is what gives <c>consumedBy</c> something to say.
+    /// </para>
+    /// </remarks>
+    public static FlowModel FullyDescribed() => new(
+        flowId: "claim.settle",
+        version: "2.0.0",
+        profile: "Durable",
+        deadline: "PT45S",
+        containingNamespace: "Sample.Flows",
+        typeName: "SettleClaimFlow",
+        inputTypeName: "Sample.Contracts.ClaimToSettle",
+        outputTypeName: "Sample.Contracts.SettledClaim",
+        steps:
+        [
+            StepModel.Capability(
+                0,
+                "Sample.Capabilities.QuoteSettlement",
+                "claim.quote",
+                "1.0.0",
+                isIdempotent: true,
+                location: "/src/Flows/Settle.cs:20",
+                authorizationMode: "Public",
+                approvedBy: "s.okonkwo",
+                capabilitySource: "/src/Capabilities/QuoteSettlement.cs:14"),
+            StepModel.Capability(
+                1,
+                "Sample.Capabilities.PayClaimant",
+                "claim.pay",
+                "3.1.0",
+                isIdempotent: false,
+                sideEffects: ["payment-gateway"],
+                authorizationMode: "Permission",
+                authorizationValue: "claim.pay",
+                capabilitySource: "/src/Capabilities/PayClaimant.cs:31")
+                .WithPolicy("Policies.LedgerPost", ["Retry", "Timeout", "Audit"])
+                .WithFallbackCapability(StepModel.Capability(
+                    1,
+                    "Sample.Capabilities.QueueManualPayment",
+                    "claim.queue_manual",
+                    "1.0.0",
+                    isIdempotent: true,
+                    authorizationMode: "Internal",
+                    deprecated: "Superseded by claim.pay@3; removed in the next major.",
+                    capabilitySource: "/src/Capabilities/QueueManualPayment.cs:9")),
+            StepModel.Emit(2, "claim.settled"),
+        ],
+        declarationLocation: "/src/Flows/Settle.cs:11",
+        sensitiveInputMembers: ["Claimant.NationalId"],
+        sensitiveOutputMembers: ["Payment.Iban"]);
+
+    /// <summary>
+    /// The triggers <see cref="FullyDescribed"/> declares, including the one that consumes
+    /// its own event.
+    /// </summary>
+    public static FlowTriggersModel FullyDescribedTriggers() => new(
+        "claim.settle",
+        [
+            new TriggerModel("Bus", transport: "kafka", topic: "claim.settled", group: "settlement-audit"),
+        ]);
+
     /// <summary>A single-step flow with no namespace, to exercise the degenerate shapes.</summary>
     public static FlowModel Minimal() => new(
         flowId: "ping.send",
