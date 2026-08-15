@@ -136,6 +136,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 FlowAttributeName,
                 predicate: static (node, _) => node is ClassDeclarationSyntax,
                 transform: static (ctx, cancellationToken) => Analyze(ctx, cancellationToken))
+            .WithTrackingName("flows")
             .Where(static result => result is not null);
 
         // The manifest describes the whole application, so it needs every flow at once.
@@ -164,6 +165,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 FlowAttributeName,
                 predicate: static (node, _) => node is ClassDeclarationSyntax,
                 transform: static (ctx, cancellationToken) => ReadTriggers(ctx, cancellationToken))
+            .WithTrackingName("triggers")
             .Where(static result => result is not null);
 
         // Error catalogues are keyed on [Capability], not on [Flow], so every capability
@@ -175,6 +177,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 predicate: static (node, _) => node is ClassDeclarationSyntax,
                 transform: static (ctx, cancellationToken) => ErrorCatalogueReader.Read(
                     ctx.TargetSymbol as INamedTypeSymbol, ctx.SemanticModel.Compilation, cancellationToken))
+            .WithTrackingName("errorCatalogues")
             .Where(static result => result is not null);
 
         context.RegisterSourceOutput(
@@ -207,6 +210,7 @@ public sealed class FlowPlanGenerator : IIncrementalGenerator
                 JsonSerializableAttributeName,
                 predicate: static (node, _) => node is ClassDeclarationSyntax,
                 transform: static (ctx, cancellationToken) => ReadJsonContext(ctx, cancellationToken))
+            .WithTrackingName("jsonContexts")
             .Where(static result => result is not null);
 
         // The plan is emitted per flow, and joined to the compilation's serialiser contexts

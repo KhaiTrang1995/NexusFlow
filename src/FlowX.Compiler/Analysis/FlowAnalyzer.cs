@@ -73,10 +73,27 @@ public sealed class AnalysisResult
 /// </remarks>
 public static class FlowAnalyzer
 {
-    private const string FlowAttribute = "FlowX.FlowAttribute";
-    private const string FlowDeadlineAttribute = "FlowX.FlowDeadlineAttribute";
-    private const string SensitiveAttribute = "FlowX.SensitiveAttribute";
-    private const string SubjectAttribute = "FlowX.SubjectAttribute";
+    private const string FlowXNamespace = "FlowX";
+
+    private const string FlowAttribute = "FlowAttribute";
+    private const string FlowDeadlineAttribute = "FlowDeadlineAttribute";
+    private const string SensitiveAttribute = "SensitiveAttribute";
+    private const string SubjectAttribute = "SubjectAttribute";
+
+    /// <summary>Whether an attribute is the top-level <c>FlowX</c> one with this metadata name.</summary>
+    /// <remarks>
+    /// The <c>AttributeClass?.ToDisplayString() == "FlowX.XAttribute"</c> this replaces built a
+    /// fully qualified name for every attribute on every symbol it was asked about and threw all
+    /// but the match away — and it is asked once per attribute per member of both contracts of
+    /// every flow. The <c>ContainingType</c> test is what keeps the two spellings equal: a nested
+    /// <c>FlowX.Something.FlowAttribute</c> displays as its full path and never matched either.
+    /// <c>StepBindingAnalyzer.CarriesFlowAttribute</c> already reads it this way.
+    /// </remarks>
+    private static bool IsFlowXAttribute(AttributeData attribute, string metadataName) =>
+        attribute.AttributeClass is { ContainingType: null } attributeClass
+        && attributeClass.MetadataName == metadataName
+        && attributeClass.ContainingNamespace is { Name: FlowXNamespace } containing
+        && containing.ContainingNamespace is { IsGlobalNamespace: true };
 
     /// <summary>Analyses one flow type.</summary>
     /// <param name="flowType">The class carrying <c>[Flow]</c>.</param>
@@ -95,7 +112,7 @@ public static class FlowAnalyzer
         }
 
         var flowAttribute = flowType.GetAttributes()
-            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == FlowAttribute);
+            .FirstOrDefault(a => IsFlowXAttribute(a, FlowAttribute));
 
         if (flowAttribute is null || flowAttribute.ConstructorArguments.Length == 0)
         {
@@ -117,7 +134,7 @@ public static class FlowAnalyzer
         var baseFlow = flowType.BaseType;
 
         if (baseFlow is not null && baseFlow.GetAttributes()
-                .Any(a => a.AttributeClass?.ToDisplayString() == FlowAttribute))
+                .Any(a => IsFlowXAttribute(a, FlowAttribute)))
         {
             diagnostics.Add(Diagnostic.Create(
                 FlowXDiagnostics.FlowInheritsFlow,
@@ -1071,7 +1088,7 @@ public static class FlowAnalyzer
         }
 
         var flowAttribute = target.GetAttributes()
-            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == FlowAttribute);
+            .FirstOrDefault(a => IsFlowXAttribute(a, FlowAttribute));
 
         // FLOWX1026 — a flow class with no [Flow] has no generated plan, so there is
         // nothing to compose and nothing the emitter could name.
@@ -2727,7 +2744,7 @@ public static class FlowAnalyzer
             }
 
             var onMember = member.GetAttributes()
-                .Any(a => a.AttributeClass?.ToDisplayString() == attribute);
+                .Any(a => IsFlowXAttribute(a, attribute));
 
             var onParameter = contract
                 .GetMembers(".ctor")
@@ -2736,7 +2753,7 @@ public static class FlowAnalyzer
                 .Any(parameter =>
                     string.Equals(parameter.Name, member.Name, System.StringComparison.OrdinalIgnoreCase) &&
                     parameter.GetAttributes()
-                        .Any(a => a.AttributeClass?.ToDisplayString() == attribute));
+                        .Any(a => IsFlowXAttribute(a, attribute)));
 
             if (!onMember && !onParameter)
             {
@@ -2804,7 +2821,7 @@ public static class FlowAnalyzer
             }
 
             var onMember = member.GetAttributes()
-                .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute);
+                .Any(a => IsFlowXAttribute(a, SensitiveAttribute));
 
             var onParameter = contract
                 .GetMembers(".ctor")
@@ -2813,7 +2830,7 @@ public static class FlowAnalyzer
                 .Any(parameter =>
                     string.Equals(parameter.Name, member.Name, System.StringComparison.OrdinalIgnoreCase) &&
                     parameter.GetAttributes()
-                        .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute));
+                        .Any(a => IsFlowXAttribute(a, SensitiveAttribute)));
 
             if ((onMember || onParameter) && !names.Contains(member.Name))
             {
@@ -2881,7 +2898,7 @@ public static class FlowAnalyzer
     private static string? ReadDeadline(INamedTypeSymbol flowType)
     {
         var attribute = flowType.GetAttributes()
-            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == FlowDeadlineAttribute);
+            .FirstOrDefault(a => IsFlowXAttribute(a, FlowDeadlineAttribute));
 
         return attribute is null || attribute.ConstructorArguments.Length == 0
             ? null

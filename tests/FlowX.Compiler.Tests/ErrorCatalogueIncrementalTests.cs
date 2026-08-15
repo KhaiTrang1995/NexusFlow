@@ -227,18 +227,19 @@ public sealed class ErrorCatalogueIncrementalTests
     /// derivation cost that ADR-0014 prices at ~3 ms per capability type on every keystroke.
     /// </para>
     /// <para>
-    /// This asserts against Roslyn's own step names, which are an implementation detail it
-    /// does not version. If a future Roslyn renames them, update the name; if a future
-    /// Roslyn reports <c>Cached</c> here, do not update the assertion — that is the
-    /// staleness bug, and <see cref="EditingAnErrorFactoryInAnotherFileUpdatesTheCatalogue"/>
-    /// will have failed alongside it.
+    /// This asserts against the generator's own <c>WithTrackingName</c>, so it names the
+    /// catalogue node rather than the aggregate Roslyn happens to lump every attribute
+    /// transform into. If a future Roslyn reports <c>Cached</c> here, do not update the
+    /// assertion — that is the staleness bug, and
+    /// <see cref="EditingAnErrorFactoryInAnotherFileUpdatesTheCatalogue"/> will have failed
+    /// alongside it.
     /// </para>
     /// </remarks>
     [Fact]
     public void TheCatalogueIsRederivedForEveryCapabilityOnEveryEditAnywhere()
     {
         const string UnrelatedPath = "/src/Unrelated.cs";
-        const string TransformStep = "result_ForAttributeWithMetadataName";
+        const string TransformStep = "errorCatalogues";
 
         var first = GeneratorHarness.CompilationOf(
             (ErrorsPath, ErrorsFile("inventory.out_of_stock")),
