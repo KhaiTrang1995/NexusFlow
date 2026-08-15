@@ -367,6 +367,58 @@ public sealed class MigrationTests
                 "which is what makes this migration deployable under a rolling update.");
     }
 
+    /// <summary>
+    /// A previous release keeps limiting after <c>0015</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The cheapest shape of the expand rule to get wrong: <c>0015</c> adds
+    /// <c>quota_counter</c>, a table a pod running the previous release has never heard of. The
+    /// risk is not that it will fail to use it — it will not try — but that adding it disturbs
+    /// what that pod does use, which for a policy schema is the two tables <c>0006</c> created.
+    /// </para>
+    /// <para>
+    /// So the schema is stood at 14, written to by SQL naming exactly the columns
+    /// <c>PostgresRateLimiterStore</c> named at that release, brought forward, and written to
+    /// again.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheQuotaMigrationDoesNotBreakTheReleaseBeforeIt()
+    {
+        await using var schema = await PostgresTestSchema.CreateAsync(Cancellation, throughVersion: 14);
+
+        var bucket = "flowx:rl:" + Guid.NewGuid().ToString("n");
+
+        await schema.ExecuteAsync(
+            "INSERT INTO ratelimit_bucket (bucket_key, tokens, touched_at, admitted) " +
+            $"VALUES ('{bucket}', 4, now(), true)",
+            Cancellation);
+
+        (await schema.Migrator.MigrateAsync(15, Cancellation)).ShouldBe(
+            15, "the migrator brought a schema at the previous release forward.");
+
+        (await schema.ScalarAsync(
+            "SELECT count(*) FROM information_schema.tables " +
+            "WHERE table_schema = current_schema() AND table_name = 'quota_counter'",
+            Cancellation))
+            .ShouldBe(1L, "the counter table is created in the schema that was migrated.");
+
+        // And the previous release keeps spending its buckets, beside a table it cannot see.
+        await schema.ExecuteAsync(
+            "UPDATE ratelimit_bucket SET tokens = tokens - 1, touched_at = now(), " +
+            $"admitted = true WHERE bucket_key = '{bucket}'",
+            Cancellation);
+
+        (await schema.ScalarAsync(
+            $"SELECT count(*) FROM ratelimit_bucket WHERE bucket_key = '{bucket}' AND tokens = 3",
+            Cancellation))
+            .ShouldBe(
+                1L,
+                "a writer that has never heard of quota_counter spends a permit exactly as it " +
+                "did, which is what makes this migration deployable under a rolling update.");
+    }
+
     /// <summary>The current adapter works against the schema the migrator produces.</summary>
     /// <remarks>
     /// The other direction of the same rollout, and the one that catches a migration that

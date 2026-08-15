@@ -2048,6 +2048,125 @@ public static class FlowEmitter
             EmitDispatcherCache(writer, cached);
         }
 
+        var validated = ValidatedSteps(flow);
+
+        if (validated.Count > 0)
+        {
+            writer.Line();
+            EmitDispatcherValidation(writer, validated);
+        }
+
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// The capability steps that declare a <c>Validate</c> and have a rule to enforce.
+    /// </summary>
+    /// <remarks>
+    /// Both terms. A step with no <c>Validate</c> is not checked because nobody asked, and a
+    /// step whose contract yielded no rule cannot be checked at all — which is
+    /// <c>FLOWX1055</c>, an error, so a compiled flow never reaches the second case. The
+    /// condition is written anyway rather than assumed, because a generator that emitted an
+    /// empty <c>case</c> for a step the analyzer had already refused would produce a method
+    /// that admits every input if the rule were ever downgraded.
+    /// </remarks>
+    private static List<StepModel> ValidatedSteps(FlowModel flow) =>
+        flow.AllSteps
+            .Where(s => s.Kind == StepKindModel.Capability
+                        && s.PolicyKinds.Contains(ValidateKind)
+                        && s.ValidationRules.Length > 0)
+            .OrderBy(s => s.Index)
+            .ToList();
+
+    /// <summary>
+    /// The policy kind whose enforcement this emitter writes rather than passes through.
+    /// </summary>
+    /// <remarks>
+    /// Every other kind reaches the plan as a descriptor the runtime resolves. This one has no
+    /// parameters to carry: <c>docs/10 §3</c> says its rules are "generated from contract
+    /// annotations", so the declaration is the request and the emitted <c>Validate</c> switch
+    /// below is the whole of the policy. A literal for <see cref="CompensationRetryKind"/>'s
+    /// reason, and pinned the same way.
+    /// </remarks>
+    public const string ValidateKind = "Validate";
+
+    /// <summary>
+    /// Emits <c>Validate</c>: the checks a step's input contract declares, as comparisons.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the whole of stage 3's validation, and there is no run-time half.</strong>
+    /// <c>ValidationRuleReader</c> turned each <c>[Required]</c>, <c>[Range]</c> and length
+    /// annotation into a condition and a message when the manifest was built; what is written
+    /// here is those conditions, in order, against a local. Nothing reflects, nothing walks a
+    /// type, and a trimmed or NativeAOT build behaves identically — which is constraint
+    /// <strong>C2</strong> and is why the policy could not have been a run-time
+    /// <c>Validator.TryValidateObject</c>.
+    /// </para>
+    /// <para>
+    /// <strong>The input is read once into a local.</strong> A mapped step's input is the
+    /// author's mapping expression, and a condition that named it twice would run the mapping
+    /// twice — which FLOWX1011 makes safe and still leaves as work nobody asked for, and which
+    /// a rule with two bounds does by construction.
+    /// </para>
+    /// <para>
+    /// <strong>The list is allocated only when something fails.</strong> The common answer is
+    /// <c>ValidationOutcome.Valid</c>, which is a struct with a null list, so a validated step
+    /// that passes costs the comparisons and nothing else — the same bargain the engine's
+    /// policy path strikes one level up.
+    /// </para>
+    /// <para>
+    /// <strong>No message carries a value.</strong> Each is a constant string the reader built
+    /// from the rule's own declared bounds. There is no interpolation of the member into any of
+    /// them, so a <c>[Sensitive]</c> member cannot leak through a refusal — see
+    /// <c>FieldError</c>, and <c>ValidationRedactionTests</c>, which reads the generated source
+    /// and asserts it.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherValidation(SourceWriter writer, List<StepModel> validated)
+    {
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public ValidationOutcome Validate(int stepIndex, FlowContext ctx)");
+        writer.OpenBrace();
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in validated)
+        {
+            writer.Line("case " + step.Index + ":");
+            writer.OpenBrace();
+            writer.Line("var input = " + InputExpression(step) + ";");
+            writer.Line("System.Collections.Generic.List<FieldError>? failures = null;");
+            writer.Line();
+
+            foreach (var rule in step.ValidationRules)
+            {
+                writer.Line("if (" + rule.Condition.Replace(
+                    Model.ValidationRuleModel.InputPlaceholder, "input") + ")");
+                writer.OpenBrace();
+                writer.Line("(failures ??= []).Add(new FieldError(");
+                writer.Line("    " + Quote(rule.Field) + ",");
+                writer.Line("    " + Quote(rule.Rule) + ",");
+                writer.Line("    " + Quote(rule.Message) + "));");
+                writer.CloseBrace();
+                writer.Line();
+            }
+
+            writer.Line("return failures is null");
+            writer.Line("    ? ValidationOutcome.Valid");
+            writer.Line("    : ValidationOutcome.Invalid(failures);");
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("// A step this flow does not validate. The engine asks only for the ones");
+        writer.Line("// it does, and Unavailable is a refusal rather than an admission — so a");
+        writer.Line("// plan and a dispatcher from different builds fail loudly.");
+        writer.Line("return ValidationOutcome.Unavailable;");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
         writer.CloseBrace();
     }
 

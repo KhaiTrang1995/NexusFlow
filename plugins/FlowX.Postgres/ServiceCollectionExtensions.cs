@@ -117,8 +117,9 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers <see cref="IRateLimiterStore"/> and <see cref="IIdempotencyStore"/> over the
-    /// data source <see cref="AddFlowXPostgres"/> built.
+    /// Registers <see cref="IRateLimiterStore"/>, <see cref="IQuotaStore"/> and
+    /// <see cref="IIdempotencyStore"/> over the data source <see cref="AddFlowXPostgres"/>
+    /// built.
     /// </summary>
     /// <param name="services">The container being built.</param>
     /// <returns>The same collection, for chaining.</returns>
@@ -133,10 +134,12 @@ public static class ServiceCollectionExtensions
     /// a choice.
     /// </para>
     /// <para>
-    /// <strong>Requires migration 6.</strong> Both stores read tables <c>0006_policy_stores.sql</c>
-    /// creates, and a host that registers them against an unmigrated schema gets a refusal
-    /// naming the migration rather than a silent admission — which is the direction
-    /// <see cref="IRateLimiterStore"/>'s contract requires.
+    /// <strong>Requires migrations 6 and 15.</strong> Two of the stores read tables
+    /// <c>0006_policy_stores.sql</c> creates and the quota reads the one
+    /// <c>0015_quota_counter.sql</c> creates, and a host that registers them against an
+    /// unmigrated schema gets a refusal naming the migration rather than a silent admission —
+    /// which is the direction <see cref="IRateLimiterStore"/>'s contract requires and
+    /// <see cref="IQuotaStore"/>'s repeats.
     /// </para>
     /// </remarks>
     public static IServiceCollection AddFlowXPostgresPolicyStores(this IServiceCollection services)
@@ -148,6 +151,12 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IIdempotencyStore>(
             provider => new PostgresIdempotencyStore(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        // Stage 1's second store, registered with the first because a deployment that wants one
+        // shared budget wants the other in the same place. It reads quota_counter, which
+        // 0015_quota_counter.sql creates.
+        services.AddSingleton<IQuotaStore>(
+            provider => new PostgresQuotaStore(provider.GetRequiredService<NpgsqlDataSource>()));
 
         return services;
     }

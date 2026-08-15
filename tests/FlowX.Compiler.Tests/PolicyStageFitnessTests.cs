@@ -178,6 +178,8 @@ public sealed class PolicyStageFitnessTests
         string[] executed =
         [
             StepPolicy.RateLimitKind,
+            StepPolicy.QuotaKind,
+            StepPolicy.ValidateKind,
             StepPolicy.IdempotencyKind,
             StepPolicy.TimeoutKind,
             StepPolicy.RetryKind,

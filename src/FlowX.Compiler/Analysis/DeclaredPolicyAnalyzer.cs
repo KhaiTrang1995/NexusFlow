@@ -22,7 +22,8 @@ namespace FlowX.Compiler.Analysis;
 /// step loop, and <c>ExecutionPlan.HasAuditedSteps</c> with <c>StepNode.StepAudit</c> after
 /// the commit. Underneath them, <c>PolicyChain.Ordered</c> is read in exactly three places in
 /// <c>src/</c> — <c>CompensationPolicy.From</c>, <c>StepPolicy.From</c> and
-/// <c>StepAudit.From</c> — and between them they read all nine kinds <c>PolicySet</c> offers.
+/// <c>StepAudit.From</c> — and between them they read all thirteen kinds <c>PolicySet</c>
+/// offers.
 /// </para>
 /// <para>
 /// <strong>Which is why this analyzer no longer reports an inert kind.</strong> FLOWX1032 said
@@ -107,7 +108,9 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
     /// <c>Hedge</c> and <c>Fallback</c> when stage 4 grew from four kinds to six
     /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>),
     /// which is the first time this list has grown over a kind that was catalogued and
-    /// undeclarable rather than declarable and unread.
+    /// undeclarable rather than declarable and unread; and <c>Quota</c> and <c>Validate</c> when
+    /// stages 1 and 3 each grew a second kind, which is the second time and the first over a
+    /// stage that already executed.
     /// </para>
     /// <para>
     /// <strong>It stays a list rather than becoming a stage range, even now that it is
@@ -121,6 +124,8 @@ public sealed class DeclaredPolicyAnalyzer : DiagnosticAnalyzer
         ImmutableHashSet.Create(
             System.StringComparer.Ordinal,
             "RateLimit",
+            "Quota",
+            "Validate",
             "Idempotency",
             "Timeout",
             "Retry",

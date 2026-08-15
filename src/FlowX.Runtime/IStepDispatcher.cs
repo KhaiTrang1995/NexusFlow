@@ -410,6 +410,49 @@ public interface IStepDispatcher
     JournalPayload DescribeInput(object? input) => JournalPayload.Empty;
 
     /// <summary>
+    /// Checks this step's input against the rules its contract declares.
+    /// </summary>
+    /// <param name="stepIndex">Position in the plan's step graph.</param>
+    /// <param name="ctx">
+    /// The scope the step is about to run under — the iteration's view inside a <c>ForEach</c>
+    /// body, so that what is checked is what the capability will be handed.
+    /// </param>
+    /// <returns>
+    /// <see cref="ValidationOutcome.Valid"/>, the field errors, or
+    /// <see cref="ValidationOutcome.Unavailable"/> when this dispatcher has no generated checks
+    /// for the step — which the engine reads as a refusal.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Here rather than on the engine, for <see cref="DescribeCacheKey"/>'s reason and
+    /// one more.</strong> The input is a contract value in a <c>Dictionary&lt;Type, object&gt;</c>
+    /// or the result of a mapping, so only generated code can name its type — and the checks
+    /// themselves are generated too, out of the contract's <c>[Required]</c>, <c>[Range]</c>
+    /// and length annotations, read by the compiler in the same pass that builds the manifest.
+    /// An engine that validated for itself would need to reflect over the contract at run time,
+    /// which is what constraint <strong>C2</strong> and
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0002-compile-time-orchestration.md">ADR-0002</a>
+    /// refuse.
+    /// </para>
+    /// <para>
+    /// <strong>Synchronous, and returning a struct.</strong> Stage 3 runs before the retry loop
+    /// on every execution of a validated step, and the answer is nearly always "fine" — an
+    /// awaitable would put a state machine, and a class would put a heap object, on a path
+    /// whose whole job is a handful of comparisons. There is nothing to await in any case: a
+    /// rule that had to call something would not be a rule the compiler could read off a
+    /// contract.
+    /// </para>
+    /// <para>
+    /// <strong>Defaulted to <see cref="ValidationOutcome.Unavailable"/> and not to
+    /// <see cref="ValidationOutcome.Valid"/>.</strong> A hand-written dispatcher that does not
+    /// implement this and whose plan declares a <c>Validate</c> gets a refused step, not an
+    /// unchecked one. The opposite default would make the policy read as satisfied on exactly
+    /// the dispatchers nothing generated — see <see cref="ValidationOutcome"/>.
+    /// </para>
+    /// </remarks>
+    ValidationOutcome Validate(int stepIndex, FlowContext ctx) => ValidationOutcome.Unavailable;
+
+    /// <summary>
     /// Names what this step's result depends on, for a <c>Cache</c> key.
     /// </summary>
     /// <param name="stepIndex">Position in the plan's step graph.</param>

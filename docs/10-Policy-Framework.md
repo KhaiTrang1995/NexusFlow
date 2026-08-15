@@ -20,18 +20,24 @@
 > real plan, and `samples/banking` settles a transfer whose screening provider
 > fails once.
 >
-> **Stage 1 — `Admission` — and stage 3 — `Integrity` — are applied too, against
-> a store the deployment shares.** A declared `RateLimit` takes a permit from a
+> **Stage 1 — `Admission` — and stage 3 — `Integrity` — are applied too, and each runs two
+> kinds.** A declared `RateLimit` takes a permit from a
 > distributed token bucket before the step is dispatched, and refuses with
-> `policy.rate_limited` when the budget is spent. A declared `Idempotency` window
+> `policy.rate_limited` when the budget is spent; a declared `Quota` spends one unit of a
+> fixed-window counter after it and refuses with `policy.quota_exhausted` when the plan is
+> spent for the period. A declared `Validate` checks the input against the rules its contract
+> declares and refuses with `policy.validation_failed`; a declared `Idempotency` window
 > claims the key, replays a recorded result for a repeat, and refuses a
-> concurrent presentation. Both sit outside the retry loop. Neither has an
+> concurrent presentation. All four sit outside the retry loop. Neither store-backed kind has an
 > in-memory fallback: a step declaring one with no store registered is refused
-> rather than run, because a limiter counting in a process admits n × the
-> declared rate across n nodes
+> rather than run, because a budget counted in a process admits n × the
+> declared figure across n nodes
 > ([ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)).
-> `IRateLimiterStore` and `IIdempotencyStore` are the seams; Redis and PostgreSQL
-> back them, held to `RateLimiterConformance` and `IdempotencyStoreConformance`.
+> `IRateLimiterStore`, `IQuotaStore` and `IIdempotencyStore` are the seams; PostgreSQL backs all
+> three and Redis backs two, held to `RateLimiterConformance`, `QuotaStoreConformance` and
+> `IdempotencyStoreConformance`. `Validate` needs no store at all — its enforcement is generated
+> source in the flow's own dispatcher — and its build-time misuse is
+> [`FLOWX1055`](diagnostics/FLOWX1055.md), a `Validate` over a contract that declares no rule.
 >
 > **A flow that declares a `[Sensitive]` contract member may not declare an
 > `Idempotency` window** — [`FLOWX1040`](diagnostics/FLOWX1040.md), an error.
@@ -54,7 +60,7 @@
 > the caller; a missing `IResultCache` merely dispatches, because an unconsulted cache costs
 > latency and never correctness.
 >
-> **No declarable kind is inert.** All nine `PolicySet` builders reach code that applies what
+> **No declarable kind is inert.** All thirteen `PolicySet` builders reach code that applies what
 > they declared. [`FLOWX1032`](diagnostics/README.md#flowx1032-is-deleted-with-what-it-described)
 > — the rule that reported a declared policy nothing executed — is **deleted**, having been
 > narrowed from the eight kinds it was written over, to four when the policy engine landed,
@@ -68,13 +74,23 @@
 > refuses a window to. All four of its subsections are now history and are marked as such
 > rather than deleted.
 >
-> **Six catalogue rows in §3 cannot be declared at all.** `PolicySet` offers
-> eleven builder methods, and there is no policy attribute anywhere in
+> **Four catalogue rows in §3 cannot be declared at all.** `PolicySet` offers
+> thirteen builder methods, and there is no policy attribute anywhere in
 > `FlowX.Abstractions` — the `[Timeout]`, `[CircuitBreaker]`, `[Audit]`,
-> `[RateLimit]` and `[Idempotency]` attributes in §4 do not exist. So `Quota`,
-> `Authorize`, `Consent`, `Validate`, `Batch` and `Outbox` are
+> `[RateLimit]` and `[Idempotency]` attributes in §4 do not exist. So `Authorize`,
+> `Consent`, `Batch` and `Outbox` are
 > specification with no surface: no author can write one, and there is
 > nothing for an engine to execute. §3 marks each of them.
+>
+> **It said six until WP-81 and WP-82.** `Validate` and `Quota` are builder methods now, and
+> the two stages that already executed each grew a second kind rather than a new stage:
+> `PolicySet.Quota(budget, period, scope)` spends a fixed-window counter in an `IQuotaStore`
+> before the step is dispatched and refuses with `policy.quota_exhausted` carrying the remainder
+> of the period, and `PolicySet.Validate()` runs checks the compiler generated from the input
+> contract's `[Required]`, `[Range]` and length annotations and refuses with
+> `policy.validation_failed` carrying RFC 7807 field errors. Neither reflects at run time: the
+> quota's key is built by the engine and the validation's comparisons are emitted into the
+> generated dispatcher, which is what constraint **C2** requires of both.
 > **It said eight until WP-78 and WP-79**, which is what `Hedge` and `Fallback` leaving this
 > list means: stage 4 is now a nesting of six kinds rather than four
 > ([ADR-0078](adr/ADR-0078-stage-four-nests-six-kinds.md)), a hedge races calls it cancels the
@@ -169,17 +185,22 @@ ADR-0011 is scheduled for review after three documented counterexamples.
 
 ## 3. The policy catalogue
 
-Seventeen rows, and **eleven of them can be written down**: `PolicySet` has eleven builder
-methods and there is no policy attribute in `FlowX.Abstractions`. All eleven execute.
+Seventeen rows, and **thirteen of them can be written down**: `PolicySet` has thirteen builder
+methods and there is no policy attribute in `FlowX.Abstractions`. All thirteen execute.
 The **Status** column says which is which — *executes*, or *undeclarable* (no
 builder method, no attribute, no descriptor kind: specification with no surface). There is no
 longer a *declared only* row, which is why `FLOWX1032` is deleted.
 
-> **"Only nine of them can be written down" expired at WP-78 and WP-79.** `Hedge` and
-> `Fallback` were the two stage-4 rows this sentence counted as specification; both are builder
-> methods now, both execute, and stage 4 is a nesting of six rather than four
-> ([ADR-0078](adr/ADR-0078-stage-four-nests-six-kinds.md)). The six rows still marked
-> *undeclarable* are `Quota`, `Authorize`, `Consent`, `Validate`, `Batch` and `Outbox`.
+> **"Eleven of them can be written down" expired at WP-81 and WP-82**, which had said "nine"
+> until WP-78 and WP-79 and "eight" before that. `Validate` and `Quota` are builder methods now
+> and both execute, so the rows still marked *undeclarable* are `Authorize`, `Consent`, `Batch`
+> and `Outbox` — four, and none of them is at stage 1 or stage 3.
+> **The two stages that already executed each grew a second kind, and neither needed a new
+> hook.** Stage 1's `AdmitAsync` asks both admission kinds and returns the first refusal; stage
+> 3 runs the generated checks before the window is claimed, so a refused input never spends the
+> caller's idempotency key. That is
+> [ADR-0023](adr/ADR-0023-policy-stages-hook-through-the-plan.md)'s "widening is mechanical"
+> taken up a third time: two fields on `StepPolicy`, two terms in `IsActive`, no new plan flag.
 > **"Half of the `Fallback` row is still specification" expired at WP-80.** Both halves are
 > builder methods now — `Fallback(value)` and `Fallback<TCapability>()` — and both execute,
 > ephemeral and durable. ADR-0078 §3 named four things the capability half was blocked on;
@@ -189,10 +210,10 @@ longer a *declared only* row, which is why `FLOWX1032` is deleted.
 | Policy | Stage | Status | Key parameters | Notes |
 |---|---|---|---|---|
 | `RateLimit` | 1 | **executes** | `permits`, `window`, `scope` (global/tenant/principal) | token bucket in a shared store, refilling continuously; refuses with `policy.rate_limited` carrying a `Retry-After`. Keyed by capability id and the declared scope, so two flows calling one dependency share the bound. A `key` scope is not expressible. Needs an `IRateLimiterStore`; a step declaring one without it is **refused**, never admitted ([ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)) |
-| `Quota` | 1 | *undeclarable* | `budget`, `period`, `scope` | long-window fairness across tenants |
+| `Quota` | 1 | **executes** | `budget`, `period`, `scope` (global/tenant/principal) | long-window fairness across tenants: a **fixed window** with a stored counter, so the whole budget is granted again at the period's boundary and nothing before it — which is what a plan limit means and what a token bucket cannot express (`TenantFairness.QuotaPerWindow` says so in as many words). Refuses with `policy.quota_exhausted`, category `Forbidden`, carrying the remainder of the period as a `Retry-After`. Keyed by capability id and the declared scope, so one tenant exhausting its plan refuses only itself. Needs an `IQuotaStore`; a step declaring one without it is **refused** at run time, and a node whose registered plans declare one refuses to become ready ([ADR-0040](adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md)'s stance, which that record's revisit condition asked for by name) |
 | `Authorize` | 2 | *undeclarable* | derived from the capability's stance | deny-by-default; audited. The stance reaches the manifest and no boundary checks it |
 | `Consent` | 2 | *undeclarable* | `purpose` | GDPR purpose-limitation checks |
-| `Validate` | 3 | *undeclarable* | generated from contract annotations | field errors → RFC 7807 |
+| `Validate` | 3 | **executes** | none — generated from contract annotations | the compiler reads `[Required]`, `[Range]`, `[StringLength]`, `[MinLength]` and `[MaxLength]` off the step's input contract in the pass that builds the manifest and emits the comparisons into the generated dispatcher, so nothing reflects at run time (**C2**). The vocabulary is `System.ComponentModel.DataAnnotations`', which ships in the shared framework, so a contract pays no package reference (**C6**); `Validator.TryValidateObject` is deliberately not used. Refuses with `policy.validation_failed`, category `Validation`, carrying an `errors` detail that `ProblemDetailsMapper` renders as a validation problem's field errors. **No message carries a value** — each is built from the rule's declared bounds — so a `[Sensitive]` member cannot leak through a refusal. Runs before the idempotency window, so a refused input spends no key. A contract with no rule to check is **refused at build time by** [`FLOWX1055`](diagnostics/FLOWX1055.md) |
 | `Idempotency` | 3 | **executes** | `window`, `scope` | records the flow's state bag as of the end of the step and replays it for a repeated key; refuses a concurrent presentation. Keyed by `ctx.IdempotencyKey` + capability id + scope ([ADR-0041](adr/ADR-0041-an-idempotency-record-is-keyed-by-the-invocations-key.md)). **Only a success is recorded** — a failed step frees its key. Needs an `IIdempotencyStore`, and is **refused at build time by [`FLOWX1040`](diagnostics/FLOWX1040.md)** on a flow declaring a `[Sensitive]` contract member |
 | `Timeout` | 4 | **executes** | `duration` | armed per attempt, and clamped to what is left of the flow deadline — so §11's "a timeout longer than the deadline is a lie" is prevented rather than discouraged |
 | `Retry` | 4 | **executes** | `attempts`, `backoff`, `jitter`, `retryOn` | **requires `Idempotent = true`** (`FLOWX1014`). `attempts` includes the first. Outermost of the kinds that wrap a call ([ADR-0024](adr/ADR-0024-stage-four-is-a-fixed-nesting.md); only `Fallback` is further out, and it answers for the step rather than wrapping one — [ADR-0078](adr/ADR-0078-stage-four-nests-six-kinds.md)), which is what makes `FLOWX1019`'s `timeout × attempts` arithmetic true — for a step with no `Hedge`, whose `afterDelay` that product does not carry |
@@ -518,7 +539,7 @@ has to be instrumented by hand:
 
 | Metric | Type | Labels | Emitted |
 |---|---|---|---|
-| `flowx_policy_invocations_total` | counter | `policy`, `stage`, `capability`, `outcome` | **yes** — on refusal *and* on clean application, so a refusal rate has a denominator. `stage` is no longer constant: `Cache` reports `Efficiency` and `Audit` reports `Consistency`. `Hedge` and `Fallback` report through this counter and gain no instrument of their own: a hedged race is `ok` or `exhausted`, and a fallback is `ok` when it was not needed, `degraded` when it answered and `exhausted` when it was asked and could not — which is what makes the share of a step answered by its degraded mode computable from one series, and the health of a second dependency visible beside the first |
+| `flowx_policy_invocations_total` | counter | `policy`, `stage`, `capability`, `outcome` | **yes** — on refusal *and* on clean application, so a refusal rate has a denominator. `Quota` and `Validate` report through it and gain no instrument of their own, which is why this table is still seven rows: an exhausted plan and a refused payload are already a series with a denominator, and a second counter would publish one event twice. `stage` is no longer constant: `Cache` reports `Efficiency` and `Audit` reports `Consistency`. `Hedge` and `Fallback` report through this counter and gain no instrument of their own: a hedged race is `ok` or `exhausted`, and a fallback is `ok` when it was not needed, `degraded` when it answered and `exhausted` when it was asked and could not — which is what makes the share of a step answered by its degraded mode computable from one series, and the health of a second dependency visible beside the first |
 | `flowx_retry_attempts_total` | counter | `capability`, `attempt`, `error_code` | **yes** — attempts beyond the first only; the first dispatch is not a retry |
 | `flowx_circuit_state` | gauge (0/1/2) | `capability`, `key` | **yes** — recorded on transition, not per scrape. `key` equals `capability` until §6's composite key is expressible |
 | `flowx_ratelimit_rejected_total` | counter | `scope`, `tenant` | **yes** — refusals only, because `flowx_policy_invocations_total` already carries the admissions as their denominator. `scope` is the declared `RateLimitScope` by name, which is the decision that had not been made when this row was written |

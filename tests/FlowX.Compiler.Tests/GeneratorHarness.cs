@@ -362,6 +362,76 @@ internal static class GeneratorHarness
             .GetValue(null)!;
     }
 
+    /// <summary>
+    /// Runs the generator, compiles what it produced, loads it, and returns both halves a
+    /// running flow needs: the plan and a live dispatcher.
+    /// </summary>
+    /// <param name="source">The flow's source, preamble and all.</param>
+    /// <param name="flowTypeName">Fully-qualified name of the flow type.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong><see cref="GeneratedPlanFor"/> proves what the emitter <em>built</em>; this
+    /// proves what it <em>does</em>.</strong> For most of the generated file the two are the
+    /// same question, because the plan is the artifact and the dispatcher only forwards to
+    /// capabilities the test wrote. Stage 3's validation is the exception: the checks are
+    /// emitted comparisons over a contract's annotations, so the only honest way to assert what
+    /// a <c>[Range(1, 100)]</c> means is to hand a compiled flow an out-of-range value and read
+    /// the refusal.
+    /// </para>
+    /// <para>
+    /// The dispatcher's constructor parameters are the flow's capabilities, which the generator
+    /// injects rather than resolving. They are constructed here with
+    /// <see cref="Activator"/> — every capability in these tests is a stateless class with a
+    /// default constructor, and one that is not would fail loudly here rather than silently.
+    /// </para>
+    /// </remarks>
+    public static (FlowX.ExecutionPlan Plan, FlowX.Runtime.IStepDispatcher Dispatcher) GeneratedFlowFor(
+        string source,
+        string flowTypeName)
+    {
+        var compilation = CSharpCompilation.Create(
+            "FlowX.GeneratorTests.Running" + Guid.NewGuid().ToString("N"),
+            [CSharpSyntaxTree.ParseText(source, path: "/src/Flows/Sample.cs")],
+            References,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        CSharpGeneratorDriver
+            .Create(new FlowPlanGenerator())
+            .RunGeneratorsAndUpdateCompilation(compilation, out var updated, out _);
+
+        using var image = new System.IO.MemoryStream();
+        var emitted = updated.Emit(image);
+
+        if (!emitted.Success)
+        {
+            throw new InvalidOperationException(
+                "The generated flow did not compile:\n" + string.Join(
+                    "\n",
+                    emitted.Diagnostics
+                        .Where(static d => d.Severity == DiagnosticSeverity.Error)
+                        .Select(static d => d.Id + ": " + d.GetMessage(CultureInfo.InvariantCulture))));
+        }
+
+        var flow = Assembly.Load(image.ToArray()).GetType(flowTypeName, throwOnError: true)!;
+
+        var plan = (FlowX.ExecutionPlan)flow
+            .GetProperty("Plan", BindingFlags.Public | BindingFlags.Static)!
+            .GetValue(null)!;
+
+        var dispatcherType = flow.GetNestedType("Dispatcher", BindingFlags.Public)
+            ?? throw new InvalidOperationException(
+                $"{flowTypeName} has no generated Dispatcher, so the flow cannot be run.");
+
+        var constructor = dispatcherType.GetConstructors().Single();
+
+        var capabilities = constructor
+            .GetParameters()
+            .Select(static p => Activator.CreateInstance(p.ParameterType))
+            .ToArray();
+
+        return (plan, (FlowX.Runtime.IStepDispatcher)constructor.Invoke(capabilities));
+    }
+
     private static ImmutableArray<MetadataReference> BuildReferences()
     {
         var trusted = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string ?? string.Empty)

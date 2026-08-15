@@ -96,6 +96,7 @@ public sealed class FlowEngine
     private readonly ContextPool _contexts;
     private readonly ICompensationAlertSink? _alerts;
     private readonly IRateLimiterStore? _rateLimiter;
+    private readonly IQuotaStore? _quota;
     private readonly IIdempotencyStore? _idempotency;
     private readonly IResultCache? _cache;
     private readonly IAuditSink? _audit;
@@ -142,6 +143,9 @@ public sealed class FlowEngine
     /// </param>
     /// <param name="rateLimiter">
     /// Where a declared <c>RateLimit</c>'s budget lives, or <c>null</c> when none was registered.
+    /// </param>
+    /// <param name="quota">
+    /// Where a declared <c>Quota</c>'s counters live, or <c>null</c> when none was registered.
     /// </param>
     /// <param name="idempotency">
     /// Where a declared <c>Idempotency</c> window's records live, or <c>null</c> when none was
@@ -198,7 +202,8 @@ public sealed class FlowEngine
         IIdempotencyStore? idempotency = null,
         IResultCache? cache = null,
         IAuditSink? audit = null,
-        bool breakersPerTenant = false)
+        bool breakersPerTenant = false,
+        IQuotaStore? quota = null)
     {
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPooledContexts);
@@ -208,6 +213,7 @@ public sealed class FlowEngine
         _contexts = new ContextPool(maxPooledContexts);
         _alerts = alerts;
         _rateLimiter = rateLimiter;
+        _quota = quota;
         _idempotency = idempotency;
         _cache = cache;
         _audit = audit;
@@ -1212,7 +1218,11 @@ public sealed class FlowEngine
             // taken per attempt would make a RateLimit(20, PT1S) beside a Retry(3) admit
             // somewhere between seven and twenty callers a second depending on how healthy the
             // dependency was — a limit whose effective value is a function of an outage.
-            if (policy.HasRateLimit &&
+            //
+            // Two kinds share the stage and one call asks about both: the rate limit protects
+            // the dependency and the quota enforces the plan, and a caller has to satisfy both
+            // to be admitted at all.
+            if ((policy.HasRateLimit || policy.HasQuota) &&
                 await AdmitAsync(policy, context, capabilityId, ct).ConfigureAwait(false) is { } unadmitted)
             {
                 failure = unadmitted;
@@ -1253,6 +1263,20 @@ public sealed class FlowEngine
             // Three outcomes. A replay skips the dispatch entirely and restores what the first
             // execution produced; an in-flight repeat is refused with the holder's remaining
             // lease; a fresh key is claimed and released again below.
+            // Stage 3's first kind, and it is first inside the stage rather than beside the
+            // window by accident: docs/10 §2 lists "validation, idempotency, dedupe" in that
+            // order, and claiming a key for an input that is about to be refused would burn
+            // the caller's idempotency key on a call that never happened — so the repeat, with
+            // the payload corrected, would replay the refusal instead of running the step.
+            //
+            // The checks are the dispatcher's, because they are generated from the contract's
+            // own annotations; a dispatcher with none refuses rather than admits.
+            if (policy.Validates && ValidateStep(dispatcher, scope, i, capabilityId) is { } invalid)
+            {
+                failure = invalid;
+                break;
+            }
+
             string? idempotencyKey = null;
 
             if (policy.HasIdempotency)
@@ -1552,8 +1576,21 @@ public sealed class FlowEngine
     }
 
     /// <summary>
-    /// Stage 1: takes a permit for <paramref name="capabilityId"/>, or produces the refusal.
+    /// Stage 1: asks both admission kinds about this caller, and produces the first refusal.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The rate limit first, and the order is not arbitrary.</strong> The limiter is the
+    /// cheaper question and the one that protects the dependency; the quota is the plan limit,
+    /// and spending a month's budget on a caller a burst limiter was about to refuse anyway
+    /// would bill a tenant for a call nobody made.
+    /// </para>
+    /// <para>
+    /// One method for both because they are one stage and the step loop asks one question — the
+    /// arrangement <c>ADR-0023</c> asks of every stage that lands, and the reason stage 1
+    /// growing a second kind cost the loop no second branch.
+    /// </para>
+    /// </remarks>
     /// <param name="policy">The resolved policy. <c>HasRateLimit</c> is true.</param>
     /// <param name="context">The execution, for the tenant and principal the scope keys by.</param>
     /// <param name="capabilityId">The dependency whose budget is being spent.</param>
@@ -1576,6 +1613,32 @@ public sealed class FlowEngine
     /// </para>
     /// </remarks>
     private async ValueTask<Error?> AdmitAsync(
+        StepPolicy policy,
+        FlowExecutionContext context,
+        string capabilityId,
+        CancellationToken ct)
+    {
+        if (policy.HasRateLimit &&
+            await TakeAPermitAsync(policy, context, capabilityId, ct).ConfigureAwait(false) is { } tooFast)
+        {
+            return tooFast;
+        }
+
+        return policy.HasQuota
+            ? await ChargeQuotaAsync(policy, context, capabilityId, ct).ConfigureAwait(false)
+            : null;
+    }
+
+    /// <summary>
+    /// Stage 1's first kind: takes a permit for <paramref name="capabilityId"/>, or produces the
+    /// refusal.
+    /// </summary>
+    /// <param name="policy">The resolved policy. <c>HasRateLimit</c> is true.</param>
+    /// <param name="context">The execution, for the tenant and principal the scope keys by.</param>
+    /// <param name="capabilityId">The dependency whose budget is being spent.</param>
+    /// <param name="ct">The caller's token.</param>
+    /// <returns><c>null</c> when the caller is admitted, otherwise the error the step fails with.</returns>
+    private async ValueTask<Error?> TakeAPermitAsync(
         StepPolicy policy,
         FlowExecutionContext context,
         string capabilityId,
@@ -1612,6 +1675,109 @@ public sealed class FlowEngine
         PolicyMetrics.RateLimitRefused(policy.RateScope.ToString(), context.TenantId);
 
         return FlowErrors.RateLimited(capabilityId, verdict.Value.RetryAfter);
+    }
+
+    /// <summary>
+    /// Stage 1's second kind: spends one unit of the holder's budget, or produces the refusal.
+    /// </summary>
+    /// <param name="policy">The resolved policy. <c>HasQuota</c> is true.</param>
+    /// <param name="context">The execution, for the tenant and principal the scope keys by.</param>
+    /// <param name="capabilityId">The dependency whose budget is being spent.</param>
+    /// <param name="ct">The caller's token.</param>
+    /// <returns><c>null</c> when the caller is admitted, otherwise the error the step fails with.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Three ways not to be admitted, and all three refuse</strong> — no store, a store
+    /// that said no, a store that did not answer — which is <see cref="AdmitAsync"/>'s
+    /// arrangement and is deliberately the same one. What differs is which refusal each
+    /// produces: "the plan is spent" and "the counter is unreachable" lead to opposite repairs,
+    /// exactly as they do for a limiter.
+    /// </para>
+    /// <para>
+    /// <strong>The key carries the scope's identity</strong>, so a tenant that exhausts its plan
+    /// refuses only itself. That is the whole of why this policy is in the catalogue —
+    /// <c>docs/16 §4</c>'s fairness, applied to a capability rather than to an admission.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Error?> ChargeQuotaAsync(
+        StepPolicy policy,
+        FlowExecutionContext context,
+        string capabilityId,
+        CancellationToken ct)
+    {
+        if (_quota is null)
+        {
+            return FlowErrors.QuotaStoreUnavailable(capabilityId);
+        }
+
+        var key = PolicyKeys.Quota(
+            capabilityId, policy.QuotaScope, context.TenantId, context.Principal?.Identity?.Name);
+
+        var verdict = await _quota
+            .TryConsumeAsync(key, policy.Budget, policy.QuotaPeriod, ct)
+            .ConfigureAwait(false);
+
+        if (verdict.IsFailure)
+        {
+            return FlowErrors.QuotaStoreUnavailable(capabilityId, verdict.Error);
+        }
+
+        if (verdict.Value.Admitted)
+        {
+            PolicyApplied(StepPolicy.QuotaKind, AdmissionStage, capabilityId, PolicyMetrics.OkOutcome);
+
+            return null;
+        }
+
+        // No instrument of its own. docs/10 §9's table is seven rows and a quota refusal is not
+        // one of them — flowx_policy_invocations_total already carries it with the stage and the
+        // outcome, and the denominator beside it, which is what an exhaustion rate needs. A
+        // second counter would publish the same event under a second name.
+        PolicyApplied(StepPolicy.QuotaKind, AdmissionStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+        return FlowErrors.QuotaExhausted(capabilityId, verdict.Value.RetryAfter);
+    }
+
+    /// <summary>
+    /// Stage 3's first kind: runs the generated checks, or produces the refusal.
+    /// </summary>
+    /// <param name="dispatcher">The generated dispatcher, which owns the checks.</param>
+    /// <param name="scope">The scope the step will run under, so the input checked is the one dispatched.</param>
+    /// <param name="stepIndex">Position in the plan's step graph.</param>
+    /// <param name="capabilityId">The dependency the input was destined for.</param>
+    /// <returns><c>null</c> when the input is good, otherwise the error the step fails with.</returns>
+    /// <remarks>
+    /// Synchronous, unlike every other policy hook on this path, because the checks are
+    /// comparisons over a value the process already holds. Nothing here can wait, so nothing
+    /// here is awaited — a validated step costs no state machine.
+    /// </remarks>
+    private static Error? ValidateStep(
+        IStepDispatcher dispatcher,
+        FlowContext scope,
+        int stepIndex,
+        string capabilityId)
+    {
+        var outcome = dispatcher.Validate(stepIndex, scope);
+
+        if (!outcome.WasChecked)
+        {
+            PolicyApplied(
+                StepPolicy.ValidateKind, IntegrityStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+            return FlowErrors.ValidationUnavailable(capabilityId);
+        }
+
+        if (outcome.IsValid)
+        {
+            PolicyApplied(StepPolicy.ValidateKind, IntegrityStage, capabilityId, PolicyMetrics.OkOutcome);
+
+            return null;
+        }
+
+        PolicyApplied(
+            StepPolicy.ValidateKind, IntegrityStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+        return FlowErrors.ValidationFailed(capabilityId, outcome.Failures!);
     }
 
     /// <summary>What <see cref="BeginIdempotentAsync"/> found.</summary>

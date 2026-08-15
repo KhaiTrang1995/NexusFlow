@@ -317,6 +317,10 @@ internal sealed class TransferHarness
         /// a cache key that reads empty makes every cached step look uncached. PLAN §9 item 12
         /// records this costing the repository twice, both times in a harness like this one.
         /// </remarks>
+        public ValidationOutcome Validate(int stepIndex, FlowContext ctx) =>
+            ((IStepDispatcher)_inner).Validate(stepIndex, ctx);
+
+        /// <inheritdoc cref="DescribeCacheKey" />
         public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>
             ((IStepDispatcher)_inner).DescribeCacheKey(stepIndex, ctx);
 

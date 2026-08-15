@@ -511,6 +511,46 @@ internal sealed class RecordingDispatcher : IStepDispatcher
             : ValueTask.FromResult(StepOutcome.Success);
     }
 
+    private readonly Dictionary<int, ValidationOutcome> _validations = [];
+
+    /// <summary>Step indices the engine asked to validate, in the order it asked.</summary>
+    public List<int> Validated { get; } = [];
+
+    /// <summary>
+    /// Makes step <paramref name="index"/> answer <paramref name="outcome"/> when validated.
+    /// </summary>
+    /// <remarks>
+    /// A stored answer rather than emitted comparisons, because what the engine tests are about
+    /// is what stage 3 does with an answer, not how the answer was reached. The comparisons are
+    /// the generator's, and <c>GeneratedValidationTests</c> compiles a real contract and runs
+    /// the real emitted checks against it — including the assertion that no message carries a
+    /// value.
+    /// </remarks>
+    public RecordingDispatcher ValidatesAt(int index, ValidationOutcome outcome)
+    {
+        _validations[index] = outcome;
+        return this;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A step nothing was configured for answers <see cref="ValidationOutcome.Unavailable"/> —
+    /// the interface's own default, reproduced here rather than inherited so that the double
+    /// keeps recording what it was asked. That is the shape a hand-written dispatcher has, and
+    /// the engine refuses it.
+    /// </remarks>
+    public ValidationOutcome Validate(int stepIndex, FlowContext ctx)
+    {
+        lock (_recording)
+        {
+            Validated.Add(stepIndex);
+        }
+
+        return _validations.TryGetValue(stepIndex, out var outcome)
+            ? outcome
+            : ValidationOutcome.Unavailable;
+    }
+
     /// <inheritdoc />
     public bool Evaluate(int stepIndex, FlowContext ctx)
     {

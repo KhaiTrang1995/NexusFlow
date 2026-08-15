@@ -40,6 +40,16 @@ internal static class PolicyKeys
     /// <summary>The prefix every idempotency record carries.</summary>
     internal const string IdempotencyPrefix = "flowx:idem";
 
+    /// <summary>The prefix every step-level quota counter carries.</summary>
+    /// <remarks>
+    /// Distinct from <see cref="TenantQuotaPrefix"/>, which is a tenant's whole admission
+    /// budget, for the reason <see cref="RateLimitPrefix"/> is distinct from
+    /// <see cref="TenantRatePrefix"/>: this one belongs to a capability and is spent by the
+    /// steps that call it, and folding the two would make one step's declared plan limit bound
+    /// everything the tenant does.
+    /// </remarks>
+    internal const string QuotaPrefix = "flowx:quota";
+
     /// <summary>The prefix a tenant's admission rate bucket carries.</summary>
     /// <remarks>
     /// Distinct from <see cref="RateLimitPrefix"/> rather than a <c>RateLimitScope.Tenant</c>
@@ -94,6 +104,34 @@ internal static class PolicyKeys
         };
 
         return Build(RateLimitPrefix, scope.ToString(), capabilityId, discriminant);
+    }
+
+    /// <summary>The counter one step's long-window quota is spent from.</summary>
+    /// <param name="capabilityId">The dependency whose plan limit is being spent.</param>
+    /// <param name="scope">Whose budget it is.</param>
+    /// <param name="tenantId">The invocation's tenant, or null.</param>
+    /// <param name="principal">The caller's name, or null.</param>
+    /// <remarks>
+    /// <strong>The scope identity is in the key, and that is the whole of the fairness
+    /// property.</strong> Two tenants calling one capability under a <c>Tenant</c>-scoped quota
+    /// address two counters, so one exhausting its plan cannot refuse the other — which is what
+    /// <c>docs/16 §4</c> asks of a per-tenant bound and what a key built from the capability
+    /// alone would silently not provide.
+    /// </remarks>
+    public static string Quota(
+        string capabilityId,
+        QuotaScope scope,
+        string? tenantId,
+        string? principal)
+    {
+        var discriminant = scope switch
+        {
+            QuotaScope.Tenant => Component(tenantId),
+            QuotaScope.Principal => Component(principal),
+            _ => string.Empty,
+        };
+
+        return Build(QuotaPrefix, scope.ToString(), capabilityId, discriminant);
     }
 
     /// <summary>The bucket one tenant's admission rate is counted in.</summary>

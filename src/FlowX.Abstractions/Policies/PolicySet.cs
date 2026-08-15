@@ -464,6 +464,86 @@ public sealed class PolicySet
     public PolicySet RateLimit(int permits, TimeSpan window, RateLimitScope scope = RateLimitScope.Tenant)
         => Add(nameof(RateLimit), PolicyStage.Admission, ("permits", permits), ("window", window), ("scope", scope));
 
+    /// <summary>
+    /// Bounds how many calls a budget holder may make over a long, fixed period. Runs at
+    /// <see cref="PolicyStage.Admission"/>, beside <see cref="RateLimit"/>.
+    /// </summary>
+    /// <param name="budget">How many calls the period grants. A budget of zero declares no quota.</param>
+    /// <param name="period">
+    /// The fixed window the budget is granted over, and the boundary at which the whole of it
+    /// is granted again. Hours and days, not milliseconds — a period short enough to smooth a
+    /// burst is a <see cref="RateLimit"/> wearing this one's name.
+    /// </param>
+    /// <param name="scope">
+    /// Whose budget it is. <see cref="QuotaScope.Tenant"/> by default, which is the only scope
+    /// that makes the policy do what it exists for.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The same stage as <see cref="RateLimit"/> and a different job.</strong> A rate
+    /// limit is protective — it smooths a burst so a dependency is not knocked over — and a
+    /// quota is commercial: it enforces the plan a tenant bought, over a period a human named,
+    /// and a tenant that hits one calls its account manager rather than backing off. Both are
+    /// stage 1 because both decide whether the call happens at all, and both sit outside the
+    /// retry loop for the same reason: a budget spent per attempt would have an effective value
+    /// that is a function of how healthy the dependency was.
+    /// </para>
+    /// <para>
+    /// <strong>Tenant-scoped by default, and that is <c>docs/16 §4</c>'s first mechanism read
+    /// as a step policy.</strong> A global quota over a shared dependency is a budget the
+    /// noisiest tenant spends on everybody's behalf, which is the starvation the option exists
+    /// to prevent arriving through the option meant to prevent it.
+    /// </para>
+    /// <para>
+    /// <strong>Needs an <see cref="IQuotaStore"/>.</strong> A step declaring a quota with none
+    /// registered is refused rather than admitted, and a host whose plans declare one refuses
+    /// to become ready — the stance <see cref="IRateLimiterStore"/> takes, for
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0040-a-rate-limit-is-shared-or-it-is-not-a-rate-limit.md">ADR-0040</a>'s
+    /// reason.
+    /// </para>
+    /// </remarks>
+    public PolicySet Quota(int budget, TimeSpan period, QuotaScope scope = QuotaScope.Tenant)
+        => Add(nameof(Quota), PolicyStage.Admission, ("budget", budget), ("period", period), ("scope", scope));
+
+    /// <summary>
+    /// Refuses the step's input when it breaks a rule the contract declares. Runs at
+    /// <see cref="PolicyStage.Integrity"/>, before the idempotency window and before the
+    /// dispatch.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>No parameters, because the rules are on the contract.</strong>
+    /// <c>docs/10 §3</c> catalogues this row as "generated from contract annotations", and that
+    /// is literal: the compiler reads <c>[Required]</c>, <c>[Range]</c>, <c>[StringLength]</c>,
+    /// <c>[MinLength]</c> and <c>[MaxLength]</c> off the step's input contract in the same pass
+    /// that builds the manifest, and emits the checks into the generated dispatcher. Nothing
+    /// reflects at run time, which is constraint <strong>C2</strong>; and the rules cannot drift
+    /// from the contract, because they are not written down twice.
+    /// </para>
+    /// <para>
+    /// <strong>The vocabulary is <c>System.ComponentModel.DataAnnotations</c>' and the
+    /// enforcement is FlowX's.</strong> Those attributes ship in the shared framework, so
+    /// declaring one costs no package reference and constraint <strong>C6</strong> is untouched;
+    /// a FlowX-owned copy of <c>[Required]</c> would have been a second spelling of a word every
+    /// C# author already knows. What FlowX does not reuse is
+    /// <c>Validator.TryValidateObject</c>, which reflects.
+    /// </para>
+    /// <para>
+    /// <strong>A step whose contract declares no rule is refused at build time</strong> —
+    /// <c>FLOWX1055</c>. A validation that checks nothing is a declaration that reads as
+    /// satisfied and is not.
+    /// </para>
+    /// <para>
+    /// <strong>Failures reach the caller as RFC 7807 field errors.</strong> The refusal is an
+    /// <see cref="ErrorCategory.Validation"/> <see cref="Error"/> carrying an <c>errors</c>
+    /// detail, which <c>ProblemDetailsMapper</c> already turns into the problem document's
+    /// <c>errors</c> member. No message ever carries a member's value, so a
+    /// <c>[Sensitive]</c> member cannot leak through one — see <see cref="FieldError"/>.
+    /// </para>
+    /// </remarks>
+    public PolicySet Validate()
+        => Add(nameof(Validate), PolicyStage.Integrity);
+
     /// <summary>Replays a recorded result for a repeated idempotency key.</summary>
     public PolicySet Idempotency(TimeSpan window, IdempotencyScope scope = IdempotencyScope.Tenant)
         => Add(nameof(Idempotency), PolicyStage.Integrity, ("window", window), ("scope", scope));
@@ -560,6 +640,25 @@ public enum RateLimitScope
     Principal = 1,
 
     /// <summary>Across the whole deployment.</summary>
+    Global = 2,
+}
+
+/// <summary>Whose long-window budget a <see cref="PolicySet.Quota"/> spends.</summary>
+/// <remarks>
+/// The same three choices <see cref="RateLimitScope"/> offers, and a different default would
+/// have been wrong for a different reason: a rate limit protects a dependency and a quota
+/// enforces a plan, so <see cref="Tenant"/> is the default here because a plan belongs to a
+/// tenant, not because a global bound would be unsafe.
+/// </remarks>
+public enum QuotaScope
+{
+    /// <summary>Per tenant. The default — a plan limit belongs to whoever bought the plan.</summary>
+    Tenant = 0,
+
+    /// <summary>Per authenticated principal, for a budget granted to a person or a key.</summary>
+    Principal = 1,
+
+    /// <summary>Across the whole deployment. A platform-wide ceiling rather than a plan.</summary>
     Global = 2,
 }
 

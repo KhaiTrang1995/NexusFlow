@@ -1835,6 +1835,55 @@ public static class FlowXDiagnostics
         "chosen at run time and the missing timeout field is accepted.",
         DiagnosticSeverity.Warning);
 
+    /// <summary>FLOWX1055 — a <c>Validate</c> over a contract that declares no rule to check.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one misuse of <c>Validate</c> the compiler can see, and it is the one that
+    /// matters.</strong> Every other policy carries its parameters in the declaration, so an
+    /// author who writes one gets what they asked for or a compile error from C# itself. This
+    /// one carries none: <c>docs/10 §3</c> catalogues it as "generated from contract
+    /// annotations", so the declaration is a request for whatever the contract says, and a
+    /// contract that says nothing turns the request into a policy that examines every input and
+    /// refuses none. That is a declaration that reads as satisfied and is not — the exact shape
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
+    /// refuses, and the shape <c>FLOWX1032</c> existed to report before every catalogued kind
+    /// became declarable.
+    /// </para>
+    /// <para>
+    /// <strong>An error rather than a warning</strong>, unlike <c>FLOWX1035</c>, which reports
+    /// the comparable "this policy does nothing" for a compensation retry of one attempt. The
+    /// difference is what the author is relying on. A one-attempt retry still dispatches the
+    /// undo, so the flow behaves; an unenforced validation is the reason a step is allowed to
+    /// trust its input, and stage 3 preceding stage 6 exists so that corrupt data is refused
+    /// before the side effect rather than after it. There is also no reading under which the
+    /// declaration is deliberate: an author who wants no checks writes no <c>.Validate()</c>.
+    /// </para>
+    /// <para>
+    /// <strong>It fires on "no rule the compiler could turn into a comparison", not on "no
+    /// attribute".</strong> <c>ValidationRuleReader</c> skips the annotations whose enforcement
+    /// would need a run-time parse or a walk of the caller's collection, so a contract carrying
+    /// only those reaches here — which is right: from the flow's point of view nothing is being
+    /// checked, and the remedy is the same one.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ValidateHasNothingToCheck = Create(
+        "FLOWX1055",
+        "Validate is declared over a contract with no validation rules",
+        "'{0}' declares a Validate on '{1}', whose input contract '{2}' declares no rule this " +
+        "compiler can enforce — the policy would examine every input and refuse none",
+        "A Validate has no parameters, because its rules are the annotations on the step's " +
+        "input contract: the compiler reads [Required], [Range], [StringLength], [MinLength] " +
+        "and [MaxLength] in the same pass that builds the manifest, and emits the checks into " +
+        "the generated dispatcher. A contract that declares none leaves nothing to emit, so " +
+        "the step is refused at build time rather than shipping a stage-3 policy that admits " +
+        "everything — docs/10 §2 puts Integrity before Execution precisely so that bad input " +
+        "is refused before the side effect. Fix it by annotating the members that have a rule, " +
+        "or by removing the .Validate() from the policy set. Note that [Range] over a " +
+        "non-numeric member, its (Type, string, string) constructor, and a length attribute " +
+        "over anything but a string are read as no rule: their bounds cannot be turned into a " +
+        "comparison at build time, and a run-time parse is what constraint C2 refuses.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1885,7 +1934,8 @@ public static class FlowXDiagnostics
         HedgeRequiresIdempotency,
         FallbackMustMatchTheStepsOutput,
         FallbackRequiresNoSideEffects,
-        DeclaredWaitCannotBeFolded);
+        DeclaredWaitCannotBeFolded,
+        ValidateHasNothingToCheck);
 
     private static DiagnosticDescriptor Create(
         string id,

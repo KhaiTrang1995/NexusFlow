@@ -87,7 +87,7 @@ public sealed class ComplexityFitnessTests
     /// </remarks>
     private static readonly Dictionary<string, int> RecordedExceedances = new(StringComparer.Ordinal)
     {
-        ["FlowEngine.RunRangeAsync"] = 163,
+        ["FlowEngine.RunRangeAsync"] = 167,
         ["SeedReader.Declarations"] = 53,
         ["SeedApplier.ApplyAsync"] = 41,
         ["FlowXOptionsValidator.Validate"] = 29,

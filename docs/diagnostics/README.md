@@ -353,8 +353,9 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1052](FLOWX1052.md) | `Fallback` constant is not the step's output contract | **A degraded mode that survives the outage and then throws** — the value is filed in the state bag under its own type, so a constant of any other type is an answer no later step can bind |
 | [FLOWX1053](FLOWX1053.md) | `Fallback` requires a capability with no side effects | **A reservation reported as made when it was not, with no compensation registered for the half of it that was** — `FLOWX1018`'s objection to caching a write, reaching the same capability by the other door |
 | [FLOWX1054](FLOWX1054.md) | Declared wait is not a compile-time constant | **A flow that silently stops publishing how long it waits** — the manifest's `timeout` is folded at build time, so a wait read from configuration is omitted, `flowx diff` has no window to compare, and the build stays green. It happened to the repository's only producer of the field |
+| [FLOWX1055](FLOWX1055.md) | `Validate` is declared over a contract with no validation rules | **A stage-3 policy that examines every input and refuses none** — the rules are the annotations on the step's input contract, read at build time and emitted into the dispatcher, so a contract that declares none leaves a policy the manifest publishes, the engine calls and nothing enforces |
 
-The next is `FLOWX1055`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1056`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -716,7 +717,17 @@ unfoldable wait executes correctly under every profile, because the plan carries
 verbatim and generated C# evaluates it. What it loses is contract visibility, which is
 `FLOWX1043`'s severity for `FLOWX1043`'s reason.
 
-The next is `FLOWX1055`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1055` is claimed** — *`Validate` is declared over a contract with no validation rules*:
+the policy's rules are the annotations on the step's input contract, so a contract that declares
+none leaves nothing to emit and the declaration admits everything. It is `FLOWX1032`'s finding
+under a new id — *a declared policy nothing executes* — narrowed from a whole kind to one
+declaration, which is why that id stays retired rather than being revived: the old rule reported a
+kind the runtime had no code for, and this one reports a set the runtime has code for and the
+contract gave nothing to run. An **error**, unlike `FLOWX1035`'s comparable "this policy does
+nothing": a one-attempt compensation retry still dispatches the undo, and an unenforced validation
+is the reason a step is allowed to trust its input.
+
+The next is `FLOWX1056`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

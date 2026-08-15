@@ -76,6 +76,48 @@ public static class ProblemDetailsJson
         }
     }
 
+    /// <summary>
+    /// Writes the field errors as <c>{ "Field": ["message", …] }</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Grouped by field, because a member can break more than one rule — a string that is both
+    /// too short and not a valid reference — and a caller rendering the problem beside a form
+    /// wants every message for one input in one place.
+    /// </para>
+    /// <para>
+    /// The <c>rule</c> is deliberately not written. RFC 7807's validation shape is
+    /// field-to-messages, a client that wanted the machine-readable half would be reading a
+    /// FlowX-specific document rather than a problem document, and the rule name is already
+    /// recoverable from the message. The seam to widen if that changes is here and nowhere else.
+    /// </para>
+    /// <para>
+    /// No value ever reaches this method. A <see cref="FieldError"/> carries a name, a rule and
+    /// a constant message the compiler built from the contract's declared bounds, so a
+    /// <c>[Sensitive]</c> member cannot be rendered here — which is why the mapper's own
+    /// redaction, which matches on a detail's key, has nothing to do for this one.
+    /// </para>
+    /// </remarks>
+    private static void WriteFieldErrors(Utf8JsonWriter writer, IReadOnlyList<FieldError> failures)
+    {
+        writer.WriteStartObject();
+
+        foreach (var group in failures.GroupBy(static failure => failure.Field, StringComparer.Ordinal))
+        {
+            writer.WritePropertyName(group.Key);
+            writer.WriteStartArray();
+
+            foreach (var failure in group)
+            {
+                writer.WriteStringValue(failure.Message);
+            }
+
+            writer.WriteEndArray();
+        }
+
+        writer.WriteEndObject();
+    }
+
     private static void WriteValue(Utf8JsonWriter writer, object? value)
     {
         switch (value)
@@ -90,6 +132,15 @@ public static class ProblemDetailsJson
             case DateTimeOffset dto: writer.WriteStringValue(dto); break;
             case DateTime dt: writer.WriteStringValue(dt); break;
             case Guid g: writer.WriteStringValue(g); break;
+
+            // Stage 3's field errors, written as the object a validation problem document
+            // already carries: field name to an array of messages. One more case rather than a
+            // second document type, because the mapping from an Error to a 7807 body is
+            // ProblemDetailsMapper's and this is the shape one of its details happens to have —
+            // and because every client library that understands a validation problem
+            // understands this member. Without the case the list would fall to the default
+            // below and reach the caller as a type name.
+            case IReadOnlyList<FieldError> failures: WriteFieldErrors(writer, failures); break;
 
             default:
                 // Written, not dropped. An extension that vanishes in production but

@@ -1,4 +1,5 @@
 using FlowX.Hosting;
+using FlowX.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
@@ -427,6 +428,122 @@ public sealed class StartupValidationTests
 
         await host.StartAsync(TestContext.Current.CancellationToken);
         await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// A registered flow declaring a <c>Quota</c> with no <c>IQuotaStore</c> refuses to start.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The step policy's version of the check above, and the earliest moment anything
+    /// can make it.</strong> A DI registration is invisible to the compiler, so there is no
+    /// build-time shape available for "no store is registered" — FLOWX1055 is the build-time
+    /// rule <c>Validate</c> gets, and it is about the contract rather than the container. What
+    /// is available is the plans this node actually carries, read after the composition root has
+    /// finished registering them.
+    /// </para>
+    /// <para>
+    /// The alternative is a node that becomes ready and refuses every call to that step with
+    /// <c>policy.quota_unavailable</c> — which is loud, and still worse than a rollout that
+    /// halts, because the traffic is already routed by then.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RefusesToStartWhenAFlowDeclaresAQuotaAndNoStoreIsRegistered()
+    {
+        using var host = BuildHost(options => options.ApplicationName = "Sample.App");
+
+        host.Services.GetRequiredService<FlowCatalog>().Add(QuotaPlan(), new SucceedingDispatcher());
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(
+            async () => await host.StartAsync(TestContext.Current.CancellationToken));
+
+        error.Message.Contains("IQuotaStore", StringComparison.Ordinal).ShouldBeTrue(
+            $"the message must name the registration that is missing.\n{error.Message}");
+
+        error.Message.Contains("order.metered", StringComparison.Ordinal).ShouldBeTrue(
+            $"and the flow, so an author knows which declaration to look at.\n{error.Message}");
+    }
+
+    /// <summary>The same flow starts once a store is registered.</summary>
+    /// <remarks>
+    /// The other half, and the one that keeps the check from being a refusal nobody can satisfy.
+    /// It also pins the resolution: the store is found through the container, so a deployment
+    /// that registers one anywhere — <c>AddFlowXPostgresPolicyStores()</c>, its own — is served.
+    /// </remarks>
+    [Fact]
+    public async Task StartsWhenTheQuotaHasAStore()
+    {
+        using var host = new HostBuilder()
+            .ConfigureServices(services => services
+                .AddFlowX(options => options.ApplicationName = "Sample.App")
+                .AddSingleton<IQuotaStore>(new AlwaysAdmittingQuota()))
+            .Build();
+
+        host.Services.GetRequiredService<FlowCatalog>().Add(QuotaPlan(), new SucceedingDispatcher());
+
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>A flow that declares no quota starts with no store, which is every other flow.</summary>
+    [Fact]
+    public async Task AFlowWithNoQuotaNeedsNoStore()
+    {
+        using var host = BuildHost(options => options.ApplicationName = "Sample.App");
+
+        host.Services.GetRequiredService<FlowCatalog>().Add(
+            ExecutionPlan.Create(
+                FlowDescriptor.Create(
+                    "order.plain", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+                StepGraph.Create([StepNode.ForCapability(0, Metered)])),
+            new SucceedingDispatcher());
+
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static readonly CapabilityDescriptor Metered =
+        CapabilityDescriptor.Create("billing.meter", "1.0.0", isIdempotent: true);
+
+    private static ExecutionPlan QuotaPlan() => ExecutionPlan.Create(
+        FlowDescriptor.Create("order.metered", "1.0.0", ExecutionProfile.Ephemeral, TimeSpan.FromSeconds(30)),
+        StepGraph.Create([
+            StepNode.ForCapability(
+                0,
+                Metered,
+                policies: PolicyChain.ForStep(
+                    PolicySet.Named("plan").Quota(budget: 100, TimeSpan.FromDays(1)),
+                    Metered)),
+        ]));
+
+    private sealed class AlwaysAdmittingQuota : IQuotaStore
+    {
+        public ValueTask<Result<QuotaVerdict>> TryConsumeAsync(
+            string key, int budget, TimeSpan period, CancellationToken cancellationToken) =>
+            new(Result.Ok(new QuotaVerdict(true, budget - 1, TimeSpan.Zero)));
+    }
+
+    private sealed class SucceedingDispatcher : IStepDispatcher
+    {
+        public ValueTask<StepOutcome> ExecuteAsync(int stepIndex, FlowContext ctx, CancellationToken ct) =>
+            ValueTask.FromResult(StepOutcome.Success);
+
+        public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct) =>
+            ValueTask.FromResult(StepOutcome.Success);
+
+        public bool Evaluate(int stepIndex, FlowContext ctx) =>
+            throw new NotSupportedException("This double runs plans with no branch step.");
+
+        public int Select(int stepIndex, FlowContext ctx) =>
+            throw new NotSupportedException("This double runs plans with no switch step.");
+
+        public IterationSource BeginIteration(int stepIndex, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to begin.");
+
+        public FlowContext EnterIteration(
+            int stepIndex, in IterationSource source, int iteration, FlowContext ctx) =>
+            throw new NotSupportedException("This dispatcher has no iteration to enter.");
     }
 
     [Fact]
