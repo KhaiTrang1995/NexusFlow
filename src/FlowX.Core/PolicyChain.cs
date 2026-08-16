@@ -14,9 +14,10 @@ namespace FlowX;
 /// convenience — it is the safety property.
 /// </para>
 /// <para>
-/// The two rejections below duplicate analyzer diagnostics FLOWX1014 and FLOWX1018
-/// on purpose. The analyzer catches the mistake in user code; this catches it in a
-/// plan built any other way, so the engine's assumption holds unconditionally.
+/// The four rejections below duplicate analyzer diagnostics FLOWX1014, FLOWX1018,
+/// FLOWX1051 and FLOWX1053 on purpose. The analyzer catches the mistake in user code;
+/// this catches it in a plan built any other way, so the engine's assumption holds
+/// unconditionally.
 /// </para>
 /// </remarks>
 public sealed class PolicyChain
@@ -62,8 +63,14 @@ public sealed class PolicyChain
     /// </summary>
     /// <param name="policies">The set the author named on the step.</param>
     /// <param name="capability">The capability the step invokes.</param>
+    /// <param name="fallback">
+    /// The capability a declared <c>Fallback&lt;TCapability&gt;()</c> names, resolved. Supplied
+    /// by the generated plan, which read the type's <c>[Capability]</c> declaration at build
+    /// time; <c>null</c> for a step whose fallback is a constant or absent.
+    /// </param>
     /// <exception cref="InvalidFlowPlanException">
-    /// A retry is attached to a non-idempotent capability, or a cache to one with side effects.
+    /// A retry is attached to a non-idempotent capability, a cache or a fallback to one with
+    /// side effects, or a fallback capability that has them.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -81,15 +88,72 @@ public sealed class PolicyChain
     /// step succeeded rather than over its undo — the split is by what a policy wraps, not by
     /// which stage it runs in.
     /// </para>
+    /// <para>
+    /// <strong>A third capability arrives here too, and only here.</strong>
+    /// <c>PolicySet.Fallback&lt;TCapability&gt;()</c> can name a type and nothing more — a set
+    /// is built with no step in sight and reflecting over the type at run time is what C2
+    /// refuses — so the declaration it leaves in the descriptor is bound to
+    /// <paramref name="fallback"/> as the chain is built. That is the same service this method
+    /// already performs for the step's own capability, one level further in.
+    /// </para>
     /// </remarks>
-    public static PolicyChain ForStep(PolicySet policies, CapabilityDescriptor capability)
+    public static PolicyChain ForStep(
+        PolicySet policies,
+        CapabilityDescriptor capability,
+        CapabilityDescriptor? fallback = null)
     {
         ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(capability);
 
         return Build(
-            policies.Policies.Where(static p => p.Kind != CompensationPolicy.CompensationRetryKind),
+            policies.Policies
+                .Where(static p => p.Kind != CompensationPolicy.CompensationRetryKind)
+                .Select(p => Bind(p, fallback)),
             capability);
+    }
+
+    /// <summary>
+    /// Replaces a fallback's declared type with the descriptor the plan resolved for it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every other descriptor passes through untouched, and a fallback that named a constant
+    /// does too — <see cref="FallbackCapability"/> is the marker, so the rewrite reaches
+    /// exactly the declaration it is for.
+    /// </para>
+    /// <para>
+    /// A capability fallback whose descriptor was <em>not</em> supplied keeps the declaration,
+    /// and <c>StepPolicy.From</c> then resolves no capability from it, so the step runs with no
+    /// fallback rather than with one the engine cannot name on a journal row. That is
+    /// unreachable from a compiled plan — the emitter writes the two together — and is the
+    /// honest reading for a chain built by hand: a degraded path nothing can record is worse
+    /// than no degraded path.
+    /// </para>
+    /// </remarks>
+    private static PolicyDescriptor Bind(PolicyDescriptor policy, CapabilityDescriptor? fallback)
+    {
+        if (fallback is null ||
+            policy.Kind != StepPolicy.FallbackKind ||
+            !policy.Parameters.TryGetValue("capability", out var declared) ||
+            declared is not FallbackCapability)
+        {
+            return policy;
+        }
+
+        if (fallback.HasSideEffects)
+        {
+            throw new InvalidFlowPlanException(
+                $"Capability '{fallback.Id}' declares side effects " +
+                $"[{string.Join(", ", fallback.SideEffects)}], so it cannot be a step's " +
+                "Fallback. A fallback runs because a dependency has just failed, so it is the " +
+                "least-exercised path in the system running at the worst moment; an effect " +
+                "made there sits under a step whose own capability produced none, and the " +
+                "unwind stack has nowhere to record whose undo would reverse it. A degraded " +
+                "mode that has to write is a branch in the flow. FLOWX1053 refuses this at " +
+                "build time and this is the same rule at plan construction.");
+        }
+
+        return policy with { Parameters = policy.Parameters.SetItem("capability", fallback) };
     }
 
     /// <summary>
@@ -167,6 +231,28 @@ public sealed class PolicyChain
                 $"Capability '{capability.Id}' declares side effects " +
                 $"[{string.Join(", ", capability.SideEffects)}], so a Cache policy cannot be " +
                 "attached to it. A cache hit returns a success without performing the effect.");
+        }
+
+        if (policy.Kind == StepPolicy.HedgeKind && !capability.IsIdempotent)
+        {
+            throw new InvalidFlowPlanException(
+                $"Capability '{capability.Id}' declares Idempotent = false, so a Hedge policy " +
+                "cannot be attached to it. A hedge issues a second call while the first is " +
+                "still running, under the same idempotency key — so the effect can happen " +
+                "twice at once, and the answer the flow keeps may be either call's. That is " +
+                "the promise Idempotent = true makes, and FLOWX1014 requires of a retry for " +
+                "the sequential version of the same reason.");
+        }
+
+        if (policy.Kind == StepPolicy.FallbackKind && capability.HasSideEffects)
+        {
+            throw new InvalidFlowPlanException(
+                $"Capability '{capability.Id}' declares side effects " +
+                $"[{string.Join(", ", capability.SideEffects)}], so a Fallback policy cannot " +
+                "be attached to it. A fallback returns a success without performing the " +
+                "effect — Cache's objection exactly — and the degraded step registers no " +
+                "compensation, so an effect that half happened would be left with nothing " +
+                "pointing at it.");
         }
     }
 }

@@ -20,6 +20,13 @@ namespace FlowX.Hosting;
 /// Lowering <see cref="FlowXOptions.ChangeScanInterval"/> does not shorten that half.
 /// </para>
 /// <para>
+/// <strong>A registered <see cref="ISweepSignal"/> shortens the wait and changes nothing
+/// else.</strong> A store that can say "an event was staged" — the PostgreSQL listener is one —
+/// ends the wait early, so the interval above stops being the latency and becomes the ceiling on
+/// it. The pass either way is the same pass over the same cursor, which is what makes a wake this
+/// node never hears a slower change rather than a lost one.
+/// </para>
+/// <para>
 /// A no-op when nothing registered a subscription, or when no <c>IChangeFeed</c> was wired, rather
 /// than a registration the composition root has to remember to omit.
 /// </para>
@@ -27,23 +34,38 @@ namespace FlowX.Hosting;
 internal sealed class FlowChangeService : BackgroundService
 {
     private readonly FlowChangeScan? _scan;
+    private readonly ISweepSignal? _wake;
     private readonly TimeSpan _interval;
 
-    public FlowChangeService(FlowChangeScan? scan, FlowXOptions options)
+    /// <summary>Whether this host was deployed to run this sweep at all.</summary>
+    private readonly bool _deployed;
+
+    public FlowChangeService(FlowChangeScan? scan, FlowXOptions options, ISweepSignal? wake = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
+        _deployed = options.Sweeps.HasFlag(HostSweeps.Change);
+
         _scan = scan;
+        _wake = wake;
         _interval = options.ChangeScanInterval;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // What this host was deployed to do, which is a different question from what it
+        // is capable of doing -- HostSweeps says why the two are kept apart. Checked
+        // before anything else so an opted-out host starts no loop and takes no lock.
+        if (!_deployed)
+        {
+            return;
+        }
+
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await Task.Delay(NextInterval(), stoppingToken).ConfigureAwait(false);
+                await WaitAsync(stoppingToken).ConfigureAwait(false);
 
                 if (_scan?.IsEnabled == true)
                 {
@@ -80,11 +102,25 @@ internal sealed class FlowChangeService : BackgroundService
 #pragma warning restore CA1031
     }
 
+    /// <summary>The pause before the next pass: the interval, or a wake that arrives first.</summary>
+    /// <remarks>
+    /// The <see cref="Task.Delay(TimeSpan, CancellationToken)"/> this replaces is still what runs
+    /// when no signal was registered, unchanged and reached by no extra call — an optional
+    /// accelerator that altered an unaccelerated host's timing would be one nobody could deploy
+    /// incrementally.
+    /// </remarks>
+    private Task WaitAsync(CancellationToken stoppingToken) =>
+        _wake is null
+            ? Task.Delay(NextInterval(), stoppingToken)
+            : _wake.WaitAsync(SweepKind.Change, NextInterval(), stoppingToken);
+
     /// <summary>The configured interval, spread over ±25 % so nodes drift apart.</summary>
     /// <remarks>
     /// Nodes that polled in lockstep would all reach for the same subscription lease at the same
     /// instant and all but one would be refused; drifting them apart means the first one usually
-    /// wins uncontested.
+    /// wins uncontested. The jitter is still applied when a wake is what usually ends the wait:
+    /// what it spreads is the fallback, which is exactly the pass every node makes when nothing
+    /// woke any of them.
     /// </remarks>
     private TimeSpan NextInterval() =>
         _interval * (0.75 + (Random.Shared.NextDouble() / 2));

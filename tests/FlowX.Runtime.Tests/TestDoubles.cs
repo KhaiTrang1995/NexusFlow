@@ -316,7 +316,25 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         return this;
     }
 
+    /// <summary>
+    /// Holds only the <paramref name="visit"/>th call at step <paramref name="index"/>, and
+    /// lets that call notice a cancellation.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="HoldAt"/> holds every visit, which is the right shape for a bulkhead — two
+    /// callers, one step — and the wrong one for a hedge, where the two calls are visits to the
+    /// same step and only one of them is supposed to be slow. The wait observes the token so
+    /// that the losing call ends the way a real one does: cancelled, from inside the capability.
+    /// </remarks>
+    public RecordingDispatcher HoldAtVisit(int index, int visit, Task release, TaskCompletionSource entered)
+    {
+        _heldVisit = (index, visit, release, entered);
+        return this;
+    }
+
     private (int Index, Task Release, TaskCompletionSource Entered)? _held;
+
+    private (int Index, int Visit, Task Release, TaskCompletionSource Entered)? _heldVisit;
 
     /// <summary>Highest number of steps observed running at once. 1 means nothing overlapped.</summary>
     public int PeakConcurrency { get; private set; }
@@ -379,6 +397,12 @@ internal sealed class RecordingDispatcher : IStepDispatcher
                 await held.Release.ConfigureAwait(false);
             }
 
+            if (_heldVisit is { } heldVisit && heldVisit.Index == stepIndex && heldVisit.Visit == visit)
+            {
+                heldVisit.Entered.TrySetResult();
+                await heldVisit.Release.WaitAsync(ct).ConfigureAwait(false);
+            }
+
             if (_visitFailures.TryGetValue((stepIndex, visit), out var visitError))
             {
                 return StepOutcome.Failed(visitError);
@@ -395,6 +419,65 @@ internal sealed class RecordingDispatcher : IStepDispatcher
                 _running--;
             }
         }
+    }
+
+    /// <summary>Step indices whose fallback capability the engine asked, in order.</summary>
+    /// <remarks>
+    /// Separate from <see cref="Executed"/> on purpose, and it is the assertion that a
+    /// capability fallback is a dispatch of its own rather than a second visit to the step: a
+    /// double that recorded both in one list could not tell "the fallback answered" from "the
+    /// retry ran once more".
+    /// </remarks>
+    public List<int> FellBackAt { get; } = [];
+
+    private readonly Dictionary<int, Error> _fallbackFailures = [];
+    private readonly Dictionary<int, Action<FlowContext>> _fallbackAnswers = [];
+
+    /// <summary>
+    /// Makes step <paramref name="index"/>'s fallback capability answer with
+    /// <paramref name="answer"/>.
+    /// </summary>
+    /// <remarks>
+    /// The typed <c>ctx.Set</c> is the whole point: it stands in for the line the generated
+    /// <c>ExecuteFallbackAsync</c> emits, which is the only code that may name the contract.
+    /// Writing it by hand here is what proves the seam is implementable, exactly as this
+    /// double's forward switch proved <c>ExecuteAsync</c>'s.
+    /// </remarks>
+    public RecordingDispatcher FallBackWith<TValue>(int index, TValue answer)
+        where TValue : notnull
+    {
+        _fallbackAnswers[index] = ctx => ctx.Set(answer);
+        return this;
+    }
+
+    /// <summary>Makes step <paramref name="index"/>'s fallback capability fail too.</summary>
+    public RecordingDispatcher FailFallbackAt(int index, Error error)
+    {
+        _fallbackFailures[index] = error;
+        return this;
+    }
+
+    /// <inheritdoc />
+    public ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+    {
+        lock (_recording)
+        {
+            FellBackAt.Add(stepIndex);
+            Trace.Add(
+                Name + ".fallback." + stepIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (_fallbackFailures.TryGetValue(stepIndex, out var error))
+        {
+            return ValueTask.FromResult(StepOutcome.Failed(error));
+        }
+
+        if (_fallbackAnswers.TryGetValue(stepIndex, out var answer))
+        {
+            answer(ctx);
+        }
+
+        return ValueTask.FromResult(StepOutcome.Success);
     }
 
     /// <inheritdoc />
@@ -426,6 +509,46 @@ internal sealed class RecordingDispatcher : IStepDispatcher
         return attempt <= budget
             ? ValueTask.FromResult(StepOutcome.Failed(error))
             : ValueTask.FromResult(StepOutcome.Success);
+    }
+
+    private readonly Dictionary<int, ValidationOutcome> _validations = [];
+
+    /// <summary>Step indices the engine asked to validate, in the order it asked.</summary>
+    public List<int> Validated { get; } = [];
+
+    /// <summary>
+    /// Makes step <paramref name="index"/> answer <paramref name="outcome"/> when validated.
+    /// </summary>
+    /// <remarks>
+    /// A stored answer rather than emitted comparisons, because what the engine tests are about
+    /// is what stage 3 does with an answer, not how the answer was reached. The comparisons are
+    /// the generator's, and <c>GeneratedValidationTests</c> compiles a real contract and runs
+    /// the real emitted checks against it — including the assertion that no message carries a
+    /// value.
+    /// </remarks>
+    public RecordingDispatcher ValidatesAt(int index, ValidationOutcome outcome)
+    {
+        _validations[index] = outcome;
+        return this;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A step nothing was configured for answers <see cref="ValidationOutcome.Unavailable"/> —
+    /// the interface's own default, reproduced here rather than inherited so that the double
+    /// keeps recording what it was asked. That is the shape a hand-written dispatcher has, and
+    /// the engine refuses it.
+    /// </remarks>
+    public ValidationOutcome Validate(int stepIndex, FlowContext ctx)
+    {
+        lock (_recording)
+        {
+            Validated.Add(stepIndex);
+        }
+
+        return _validations.TryGetValue(stepIndex, out var outcome)
+            ? outcome
+            : ValidationOutcome.Unavailable;
     }
 
     /// <inheritdoc />
@@ -771,6 +894,16 @@ internal static class Plans
 
     public static CapabilityDescriptor Refund { get; } =
         CapabilityDescriptor.Create("payment.refund", "2.1.0", isIdempotent: true, "payment-gateway");
+
+    /// <summary>The second rating service a degraded step asks. No side effects, by FLOWX1053.</summary>
+    /// <remarks>
+    /// A distinct id, which is the whole of what makes a degraded row legible: the journal keys
+    /// on <c>(instance, scope, step, attempt)</c> and the column beside the key says which
+    /// capability answered, so a row carrying this rather than the step's own is a degraded one
+    /// (ADR-0079 §2.2).
+    /// </remarks>
+    public static CapabilityDescriptor Secondary { get; } =
+        CapabilityDescriptor.Create("rating.secondary", "1.0.0", isIdempotent: true);
 
     /// <summary>Four steps; steps 1 and 2 are compensable; step 3 emits.</summary>
     public static ExecutionPlan FourStepSaga(TimeSpan? deadline = null) => ExecutionPlan.Create(

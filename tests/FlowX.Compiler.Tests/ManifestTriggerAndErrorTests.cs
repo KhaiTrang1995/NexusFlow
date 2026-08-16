@@ -597,6 +597,111 @@ public sealed class ManifestTriggerAndErrorTests
             .TryGetProperty("value", out _).ShouldBeFalse();
     }
 
+    // ------------------------------- the review, the notice and the declaration
+
+    /// <summary>
+    /// A <c>Public</c> capability publishes the reviewer who signed the stance off.
+    /// </summary>
+    /// <remarks>
+    /// The schema has said <c>approvedBy</c> is "required when mode is Public" since before
+    /// anything wrote it, so every <c>Public</c> capability FlowX produced published an open
+    /// door with nobody's name on it. <c>PublicCapabilitiesAreReviewed</c> reads the same
+    /// <c>[ApprovedBy]</c> out of source and fails the build without one; this is the half
+    /// that puts it in the document a consumer outside the build actually reads.
+    /// </remarks>
+    [Fact]
+    public void TheReviewerOfAPublicStanceReachesTheManifest()
+    {
+        using var manifest = ManifestOf(Guarded(
+            """
+            [ApprovedBy("s.okonkwo", "2026-08-15")]
+            [Capability("catalogue.browse", Version = "1.0.0", Authorization = Authorization.Public)]
+            """));
+
+        Capability(manifest, "catalogue.browse").GetProperty("authorization")
+            .GetProperty("approvedBy").GetString().ShouldBe("s.okonkwo");
+    }
+
+    /// <summary>The date stays at the declaration; one field carries one fact.</summary>
+    [Fact]
+    public void TheReviewDateIsNotPublishedBesideTheReviewer()
+    {
+        using var manifest = ManifestOf(Guarded(
+            """
+            [ApprovedBy("s.okonkwo", "2026-08-15")]
+            [Capability("catalogue.browse", Version = "1.0.0", Authorization = Authorization.Public)]
+            """));
+
+        var reviewer = Capability(manifest, "catalogue.browse").GetProperty("authorization")
+            .GetProperty("approvedBy").GetString();
+
+        reviewer.ShouldNotBeNull();
+        reviewer.ShouldNotContain("2026");
+    }
+
+    /// <summary>
+    /// <c>[Obsolete("...")]</c> reaches the manifest as <c>deprecated</c>, which is the field
+    /// <c>FLOWX-DIFF-204</c> has compared since before anything could produce one.
+    /// </summary>
+    [Fact]
+    public void AnObsoletionNoticeReachesTheManifestAsDeprecated()
+    {
+        using var manifest = ManifestOf(Guarded(
+            """
+            [System.Obsolete("Use payment.capture@3 instead; this is removed in the next major.")]
+            [Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Authenticated)]
+            """));
+
+        Capability(manifest, "payment.capture").GetProperty("deprecated").GetString()
+            .ShouldBe("Use payment.capture@3 instead; this is removed in the next major.");
+    }
+
+    /// <summary>
+    /// A bare <c>[Obsolete]</c> publishes nothing, because it declares no notice.
+    /// </summary>
+    /// <remarks>
+    /// The negative case this family cares about more than the positive one. The field
+    /// carries the sentence that tells a consumer what to migrate to; an attribute with no
+    /// message has no sentence, and a stand-in the compiler invented would be the fabricated
+    /// value ADR-0017's F2 exists to refuse.
+    /// </remarks>
+    [Fact]
+    public void ABareObsoleteAttributePublishesNoNotice()
+    {
+        using var manifest = ManifestOf(Guarded(
+            """
+            [System.Obsolete]
+            [Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Authenticated)]
+            """));
+
+        Capability(manifest, "payment.capture").TryGetProperty("deprecated", out _).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A capability's <c>source</c> is where the capability is declared, not where a flow
+    /// calls it.
+    /// </summary>
+    /// <remarks>
+    /// The distinction the schema's "file:line of the declaration, so every node in the graph
+    /// is navigable" asks for, and the one a single field could get wrong invisibly: one
+    /// entry is reached from every step that invokes it, so a call site would make the
+    /// pointer depend on which flow the writer happened to walk first.
+    /// </remarks>
+    [Fact]
+    public void ACapabilitysSourcePointsAtItsOwnDeclaration()
+    {
+        using var manifest = ManifestOf(Guarded(
+            """[Capability("payment.capture", Version = "2.1.0", Authorization = Authorization.Authenticated)]"""));
+
+        var source = Capability(manifest, "payment.capture").GetProperty("source").GetString();
+
+        source.ShouldNotBeNull();
+        source.ShouldContain(":", Case.Sensitive, "a sourceRef is file:line.");
+        source.ShouldNotBe(
+            Flow(manifest).GetProperty("source").GetString(),
+            "the capability's source is the capability's declaration, not the flow's.");
+    }
+
     // ------------------------------------------------------------- determinism
 
     [Fact]

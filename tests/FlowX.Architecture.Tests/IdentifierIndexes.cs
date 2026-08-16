@@ -318,7 +318,11 @@ internal static partial class IdentifierIndexes
     [GeneratedRegex(@"The next is `(?<next>FLOWX\d{4})`\. The range is `(?<first>FLOWX\d{4})`.`(?<last>FLOWX\d{4})`")]
     private static partial Regex DiagnosticNextFree();
 
-    [GeneratedRegex(@"^##\s+\d+\.\s+(?<phase>P\d)\s+—")]
+    // `\d+[a-z]?` and the Cross-phase alternative both exist for PLAN §6c: a reserved
+    // range that belongs to no single phase still has to be a range this gate can see,
+    // or its packages inherit whichever phase heading came last — which is exactly how
+    // WP-140…142 briefly read as P3's.
+    [GeneratedRegex(@"^##\s+\d+[a-z]?\.\s+(?<phase>P\d|Cross-phase)\s+—")]
     private static partial Regex PhaseSection();
 
     [GeneratedRegex(@"^###\s+WP-(?<first>\d+[a-z]?)(?:…WP-(?<last>\d+[a-z]?))?\s+—")]
@@ -334,6 +338,6 @@ internal static partial class IdentifierIndexes
     private static partial Regex OpenEndedPhase();
 
     /// <summary>A row of §6a's allocator table: a phase, and the span it reserves.</summary>
-    [GeneratedRegex(@"^\|\s*\*\*(?<phase>P\d)\*\*[^|]*\|\s*\*\*WP-(?<first>\d+)\s*…\s*WP-(?<last>\d+)\*\*")]
+    [GeneratedRegex(@"^\|\s*\*\*(?<phase>P\d|Cross-phase)\*\*[^|]*\|\s*\*\*WP-(?<first>\d+)\s*…\s*WP-(?<last>\d+)\*\*")]
     private static partial Regex ReservedRangeRow();
 }

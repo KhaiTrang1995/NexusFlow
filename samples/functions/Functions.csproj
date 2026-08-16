@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Functions</RootNamespace>
+    <AssemblyName>Functions</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      What the Functions worker SDK needs, and what it means. `dotnet` is the isolated
+      worker model: the flow code runs in its own process against its own .NET version,
+      rather than in the host's. That is the only model FlowX could run under at all —
+      the in-process model pins the runtime to the host's, and this repository targets
+      net10.0.
+
+      OutputType is Exe because an isolated worker IS a console application: Program.cs
+      builds a host, the platform starts the process and speaks gRPC to it.
+    -->
+    <AzureFunctionsVersion>v4</AzureFunctionsVersion>
+    <OutputType>Exe</OutputType>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Functions.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The worker, its SDK, and one extension per binding the generated file names. Each is
+      a real reference and none of them is referenced by FlowX itself: the generator emits
+      `global::Microsoft.Azure.Functions.Worker.*` by name and binds against what THIS
+      project declares, which is what keeps a netstandard2.0 analyzer free of an Azure
+      dependency. Every row is in docs/DEPENDENCIES.md.
+
+      Extensions.Http, .Timer and .ServiceBus are the three the three flows below need.
+      Dropping one does not fail the generator — it fails this compile, naming the
+      attribute it cannot find, which is the failure mode worth having.
+    -->
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.0.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.5" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" Version="4.3.1" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.ServiceBus" Version="5.22.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FlowX.Abstractions/FlowX.Abstractions.csproj" />
+    <ProjectReference Include="../../src/FlowX.Core/FlowX.Core.csproj" />
+    <ProjectReference Include="../../src/FlowX.Runtime/FlowX.Runtime.csproj" />
+    <ProjectReference Include="../../src/FlowX.Hosting/FlowX.Hosting.csproj" />
+
+    <!--
+      The journal. All three flows declare Durable, and on a push host that is not a
+      preference: the platform delivers at least once and the primary key on flow_instance
+      is the only thing that makes a redelivery inert (ADR-0035).
+    -->
+    <ProjectReference Include="../../plugins/FlowX.Postgres/FlowX.Postgres.csproj" />
+
+    <!-- The plan generator, as an analyzer, exactly as every other sample takes it. -->
+    <ProjectReference Include="../../src/FlowX.Compiler/FlowX.Compiler.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      Condition="'$(FlowXGeneratorDisabled)' != 'true'" />
+
+    <!--
+      The binding generator, and the whole of what this sample proves. It turns the same
+      three attributes the plan generator read into the [Function] entry points in
+      obj/generated — which compile here, under this repository's TreatWarningsAsErrors,
+      against the real worker SDK above.
+    -->
+    <ProjectReference Include="../../src/FlowX.Functions/FlowX.Functions.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      Condition="'$(FlowXGeneratorDisabled)' != 'true'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="host.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

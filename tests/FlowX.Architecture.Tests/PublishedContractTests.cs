@@ -149,41 +149,41 @@ public sealed partial class PublishedContractTests
     /// that says something false, quietly, to a tool.
     /// </para>
     /// <para>
-    /// Four questions, which together are what "complete" means for the document as it is
+    /// Seven questions, which together are what "complete" means for the document as it is
     /// emitted today: every flow the assembly declares is listed; every capability it
     /// declares is listed; every capability a step invokes — including a compensation — has
-    /// a full entry rather than only a mention; and every event a flow emits is described in
-    /// the event catalogue.
+    /// a full entry rather than only a mention; every event a flow emits is described in the
+    /// event catalogue; every entry in that catalogue names the flows at both its ends and
+    /// names no flow the document does not describe; the two indexes of an event — a flow's
+    /// <c>emits</c> and the event's <c>producedBy</c> — agree; and every
+    /// <c>.WithPolicy(...)</c> the assembly declares reaches a step's <c>policies</c> array.
     /// </para>
     /// <para>
-    /// <strong>Policies are not checked, and the §12 row says they should be.</strong>
-    /// The reason given here used to be "no attribute applies a policy to a step, and the
-    /// generator emits no <c>policies</c> section", and <strong>both halves are false</strong>.
-    /// <c>.WithPolicy(PolicySet)</c> attaches one, <c>FlowAnalyzer</c> reads the set well
-    /// enough to raise <c>FLOWX1014</c> and <c>FLOWX1018</c> off its contents, and
-    /// <c>ManifestWriter.WritePolicies</c> emits a <c>policies</c> array per step carrying
-    /// each policy's fixed stage.
+    /// <strong>All four of Q3's nouns are covered, and the last two arrived together on
+    /// 2026-08-15.</strong> This comment used to explain at length why <c>policies</c> was
+    /// left out, and the explanation had already decayed twice: the first version said the
+    /// generator emitted no <c>policies</c> section, which was false, and the second said
+    /// nothing in this repository declared a policy, which is now false too — banking,
+    /// healthcare, scheduler, workflow and realtime-stream each attach one, and ten kinds
+    /// execute. A check written then would have passed vacuously; a check written now cannot,
+    /// which is the only reason to write it now rather than then.
     /// </para>
     /// <para>
-    /// What is true is narrower. <strong>Nothing in this repository declares a policy</strong>,
-    /// so the emission path has never run against a shipped assembly and a completeness check
-    /// would pass vacuously — which is the thing docs/21-Quality-Gates §2.4 refuses to do. No
-    /// policy <em>executes</em> either: <c>FlowX.Runtime</c> contains no policy engine, so a
-    /// declared <c>Retry</c> is a manifest entry and nothing more. It becomes checkable with
-    /// P4.
+    /// <strong>The policy question is asked from the IL, not from the manifest.</strong>
+    /// Counting the manifest's own <c>policies</c> arrays against each other would be the
+    /// document agreeing with itself. <c>.WithPolicy(...)</c> is a call the flow's
+    /// <c>Define</c> makes, so the call sites are the independent side, and the assertion is
+    /// that the compiler dropped none of them between the builder and the document — which is
+    /// exactly what <c>WritePolicies</c> does, silently, to a policy kind it has no stage for.
     /// </para>
     /// <para>
-    /// <strong><c>events</c> has stopped being the same case.</strong> <c>.Emit&lt;T&gt;()</c>
-    /// on a <c>Durable</c> flow now stages its event in the step's own transaction and
-    /// <c>PostgresOutboxPublisher</c> drains it, so a completeness check over <c>events</c>
-    /// would not pass vacuously. <c>FLOWX1024</c> is raised only where the event still cannot
-    /// be staged — an <c>Ephemeral</c> flow, or a contract outside every source-generated
-    /// <c>JsonSerializerContext</c>. <em>This comment then said the network was unproved
-    /// because no broker plugin implemented <c>IEventPublisher</c>; that expired at WP-56b,
-    /// when <c>RedisStreamEventPublisher</c> shipped and <c>PublisherConformance</c> began
-    /// holding it and the recording double to one contract.</em> docs/05-Architecture.md §12
-    /// carries the same wording; this comment was the verbatim duplicate it named, and both
-    /// were corrected together.
+    /// <strong><c>events</c> is checked in both directions for the same reason.</strong>
+    /// <c>.Emit&lt;T&gt;()</c> on a <c>Durable</c> flow stages its event in the step's own
+    /// transaction and <c>PostgresOutboxPublisher</c> drains it, so the noun is real. The
+    /// half this gate lacked was the catalogue's own: an entry that names nobody at either
+    /// end is a subscriber's dead letter waiting to happen, and <c>producedBy</c> against
+    /// each flow's <c>emits</c> is two independently written indexes of one fact, which is
+    /// the only kind of agreement worth asserting.
     /// </para>
     /// </remarks>
     [Fact]
@@ -211,6 +211,8 @@ public sealed partial class PublishedContractTests
             manifests++;
             problems.AddRange(Missing(assembly, declared, manifest.RootElement));
             problems.AddRange(Dangling(assembly, manifest.RootElement));
+            problems.AddRange(EventsAreDescribed(assembly, manifest.RootElement));
+            problems.AddRange(PoliciesSurvived(assembly, module, manifest.RootElement));
             manifest.Dispose();
         }
 
@@ -359,6 +361,144 @@ public sealed partial class PublishedContractTests
             }
         }
     }
+
+    /// <summary>
+    /// The event catalogue's own half of completeness: every entry names the flows at its
+    /// ends, and the two indexes of an event agree.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Dangling"/> asks whether an emitted event has an entry. This asks the
+    /// reverse — whether an entry describes anything — and the two are not the same question.
+    /// An entry with no <c>producedBy</c> tells a subscriber that an event exists and gives
+    /// them no flow to look at, which is the state every entry was in until the compiler
+    /// began writing the index.
+    /// </para>
+    /// <para>
+    /// The last check is the one that cannot be satisfied by accident. A flow's <c>emits</c>
+    /// and an event's <c>producedBy</c> are written by different code from the same walk, so
+    /// they are two claims about one fact; asserting they agree is what catches one of them
+    /// being filtered, deduplicated or sorted into disagreement with the other.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<string> EventsAreDescribed(string assembly, JsonElement manifest)
+    {
+        var flows = Items(manifest, "flows").Select(f => Text(f, "id")).ToHashSet(StringComparer.Ordinal);
+
+        var emitters = Items(manifest, "flows")
+            .SelectMany(f => Items(f, "emits")
+                .Select(e => e.GetString())
+                .Where(e => e is not null)
+                .Select(e => (Event: e!, Flow: Text(f, "id"))))
+            .ToLookup(pair => pair.Event, pair => pair.Flow, StringComparer.Ordinal);
+
+        foreach (var evt in Items(manifest, "events"))
+        {
+            var type = Text(evt, "type");
+            var produced = Strings(evt, "producedBy");
+
+            if (produced.Count == 0 && Strings(evt, "consumedBy").Count == 0)
+            {
+                yield return
+                    $"{assembly}: event '{type}' is published with neither \"producedBy\" nor " +
+                    "\"consumedBy\". A consumer reading it learns that the event exists and has " +
+                    "no flow to look at, in the document that is supposed to be the graph.";
+            }
+
+            foreach (var end in (string[])["producedBy", "consumedBy"])
+            {
+                foreach (var flow in Strings(evt, end).Where(f => !flows.Contains(f)))
+                {
+                    yield return
+                        $"{assembly}: event '{type}' names flow '{flow}' under \"{end}\", and no " +
+                        "entry under \"flows\" describes it.";
+                }
+            }
+
+            var claimed = emitters[type!].ToHashSet(StringComparer.Ordinal);
+
+            foreach (var flow in claimed.Except(produced, StringComparer.Ordinal).Order(StringComparer.Ordinal))
+            {
+                yield return
+                    $"{assembly}: flow '{flow}' lists '{type}' under \"emits\", and event " +
+                    $"'{type}' does not list it under \"producedBy\". The two indexes of one " +
+                    "event disagree, so a consumer's answer depends on which end it read.";
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every <c>.WithPolicy(...)</c> the assembly declares reaches a step's <c>policies</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Q3's fourth noun, and the one that could only be asked honestly once something
+    /// declared a policy and something executed one. <c>WritePolicies</c> skips a kind it has
+    /// no stage for rather than guessing at the order it runs in — the right call, and a
+    /// silent one, so a policy vocabulary that grew without the writer's table growing with
+    /// it would drop out of the published contract and nothing would say so.
+    /// </para>
+    /// <para>
+    /// Counted rather than matched by name, because the name is not in the IL: the call takes
+    /// a <c>PolicySet</c> the flow built somewhere else, and resolving it would mean
+    /// evaluating a property body. A count is enough for what this asks — that the document
+    /// carries as many policied steps as the source declares — and it is the count that moves
+    /// when the writer drops one.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<string> PoliciesSurvived(
+        string assembly, ModuleDefinition module, JsonElement manifest)
+    {
+        var declared = IlSurvey.AllTypes(module)
+            .Where(IsFlow)
+            .SelectMany(WithNested)
+            .SelectMany(type => type.Methods)
+            .Where(method => method.HasBody)
+            .SelectMany(method => method.Body.Instructions)
+            .Count(instruction =>
+                instruction.Operand is MethodReference call &&
+                call.Name.Equals("WithPolicy", StringComparison.Ordinal));
+
+        var published = Items(manifest, "flows").Sum(flow => Policied(Items(flow, "steps")));
+
+        if (declared != published)
+        {
+            yield return
+                $"{assembly} declares {declared} .WithPolicy(...) call(s) and its manifest " +
+                $"carries {published} step(s) with a \"policies\" array. A declared policy that " +
+                "does not reach the document is a term of the published contract the runtime " +
+                "applies and no consumer can see (quality goal Q3, ADR-0011).";
+        }
+    }
+
+    /// <summary>Steps carrying a non-empty <c>policies</c> array, through nested branches.</summary>
+    private static int Policied(IEnumerable<JsonElement> steps) => steps.Sum(step =>
+        (Items(step, "policies").Count > 0 ? 1 : 0) +
+        Items(step, "branches").Sum(branch => Policied(branch.EnumerateArray())));
+
+    /// <summary>A type and every type nested inside it, to any depth.</summary>
+    /// <remarks>
+    /// A <c>Define</c> body puts each <c>Parallel</c> and <c>ForEach</c> block in a lambda,
+    /// and the compiler moves those into nested display classes. A scan of the flow type's
+    /// own methods would therefore miss every policy declared inside a fork — which is
+    /// exactly where samples/banking declares two of its seven.
+    /// </remarks>
+    private static IEnumerable<TypeDefinition> WithNested(TypeDefinition type)
+    {
+        yield return type;
+
+        foreach (var nested in type.NestedTypes.SelectMany(WithNested))
+        {
+            yield return nested;
+        }
+    }
+
+    private static List<string> Strings(JsonElement element, string name) =>
+        Items(element, name)
+            .Select(item => item.GetString())
+            .Where(value => value is not null)
+            .Select(value => value!)
+            .ToList();
 
     private static List<Contract> DeclaredContracts(ModuleDefinition module)
     {

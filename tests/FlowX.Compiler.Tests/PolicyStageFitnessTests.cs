@@ -158,8 +158,9 @@ public sealed class PolicyStageFitnessTests
     /// </para>
     /// <para>
     /// The real list is read off the three resolvers rather than typed out again:
-    /// <c>StepPolicy</c> publishes the seven descriptor kinds it reads as constants — the four
-    /// stage-4 ones, the stage-1 <c>RateLimit</c>, the stage-3 <c>Idempotency</c> and the
+    /// <c>StepPolicy</c> publishes the descriptor kinds it reads as constants — the six
+    /// stage-4 ones, stage 1's <c>RateLimit</c> and <c>Quota</c>, stage 2's <c>Consent</c>,
+    /// stage 3's <c>Validate</c> and <c>Idempotency</c>, and the
     /// stage-5 <c>Cache</c> — <c>CompensationPolicy</c> publishes the one it reads, and
     /// <c>StepAudit</c> publishes the stage-7 one. A kind implemented without a constant would
     /// slip past this — which is why they are constants, and why each new resolver publishes
@@ -178,11 +179,16 @@ public sealed class PolicyStageFitnessTests
         string[] executed =
         [
             StepPolicy.RateLimitKind,
+            StepPolicy.QuotaKind,
+            StepPolicy.ConsentKind,
+            StepPolicy.ValidateKind,
             StepPolicy.IdempotencyKind,
             StepPolicy.TimeoutKind,
             StepPolicy.RetryKind,
             StepPolicy.CircuitBreakerKind,
             StepPolicy.BulkheadKind,
+            StepPolicy.HedgeKind,
+            StepPolicy.FallbackKind,
             StepPolicy.CacheKind,
             StepAudit.AuditKind,
             CompensationPolicy.CompensationRetryKind,
@@ -310,8 +316,16 @@ public sealed class PolicyStageFitnessTests
             .GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.ReturnType == typeof(PolicySet) && m.DeclaringType == typeof(PolicySet));
 
-        foreach (var builder in builders)
+        foreach (var declared in builders)
         {
+            // A generic builder is closed over a type this test picks, because the kind and
+            // the stage a descriptor carries are the same whatever the type argument is.
+            // PolicySet.Fallback<TValue> is the first: the value it captures is typed and the
+            // policy it emits is not.
+            var builder = declared.IsGenericMethodDefinition
+                ? declared.MakeGenericMethod(typeof(int))
+                : declared;
+
             var arguments = builder.GetParameters()
                 .Select(p => p.HasDefaultValue ? p.DefaultValue : Sample(p.ParameterType))
                 .ToArray();

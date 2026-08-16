@@ -50,6 +50,8 @@ public sealed class PolicySetTests
             .Retry(3)
             .CircuitBreaker(0.5, TimeSpan.FromSeconds(30))
             .Bulkhead(8)
+            .Hedge(TimeSpan.FromMilliseconds(300))
+            .Fallback(42)
             .Cache(TimeSpan.FromMinutes(5))
             .Audit("payment");
 
@@ -61,9 +63,76 @@ public sealed class PolicySetTests
         stages["Retry"].ShouldBe(PolicyStage.Resilience);
         stages["CircuitBreaker"].ShouldBe(PolicyStage.Resilience);
         stages["Bulkhead"].ShouldBe(PolicyStage.Resilience);
+        stages["Hedge"].ShouldBe(PolicyStage.Resilience);
+        stages["Fallback"].ShouldBe(PolicyStage.Resilience);
         stages["Cache"].ShouldBe(PolicyStage.Efficiency);
         stages["Audit"].ShouldBe(PolicyStage.Consistency);
     }
+
+    /// <summary>
+    /// A fallback's constant is captured under its own static type, and files itself there.
+    /// </summary>
+    /// <remarks>
+    /// The whole of why <c>FallbackValue</c> exists rather than a boxed <c>object</c> in the
+    /// parameter dictionary: <c>FlowContext.Set&lt;T&gt;</c> is generic and the engine has no
+    /// type argument, so the type has to be captured where it is known — at the declaration.
+    /// <c>FLOWX1052</c> is the build-time half of the same fact, and
+    /// <c>PolicyExecutionTests.AFallbackAnswersWithItsConstantWhenTheStepHasFailedForTheLastTime</c>
+    /// is what asserts that a real engine puts it in a real bag under that type — this package
+    /// has no <c>FlowContext</c> to write into.
+    /// </remarks>
+    [Fact]
+    public void AFallbackCapturesItsConstantUnderItsOwnType()
+    {
+        var value = (FallbackValue)PolicySet.Named("f")
+            .Fallback(new Reservation("none"))
+            .Policies
+            .Single()
+            .Parameters["value"]!;
+
+        value.Contract.ShouldBe(typeof(Reservation));
+        value.Value.ShouldBe(new Reservation("none"));
+
+        Should.Throw<ArgumentNullException>(() => value.ApplyTo(null!));
+    }
+
+    /// <summary>
+    /// The capability-valued half of the same row declares a type and resolves nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A <c>Type</c> and not an id, and that is the design rather than a shortfall.</strong>
+    /// A <c>PolicySet</c> is a <c>static readonly</c> field built with no step in sight, and a
+    /// capability's id, version and side effects live on its <c>[Capability]</c> attribute —
+    /// so reading them from here would mean reflecting at run time, which is what constraint
+    /// C2 refuses. <c>PolicyChain.ForStep</c> binds the declaration to the descriptor the
+    /// generated plan resolved, and <c>PolicyChainTests</c> is where that is asserted.
+    /// </para>
+    /// <para>
+    /// Both overloads emit the one kind at the one stage, which is what makes
+    /// <c>docs/10 §3</c>'s "capability or constant" one policy rather than two sharing a name.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AFallbackCapabilityDeclaresATypeAndLeavesItToBeBound()
+    {
+        var policy = PolicySet.Named("f").Fallback<Reservation>().Policies.Single();
+
+        policy.Kind.ShouldBe("Fallback", "The same kind the constant overload emits.");
+        policy.Stage.ShouldBe(PolicyStage.Resilience);
+
+        policy.Parameters["capability"]
+            .ShouldBeOfType<FallbackCapability>()
+            .Capability
+            .ShouldBe(typeof(Reservation));
+
+        policy.Parameters.ContainsKey("value").ShouldBeFalse(
+            "There is no constant. A degraded answer is one thing or the other, and a " +
+            "descriptor carrying both would be a policy with two answers and no rule for " +
+            "choosing.");
+    }
+
+    private sealed record Reservation(string Sku);
 
     [Fact]
     public void RetryDefaultsToRetryingOnlyTheRetryableCategories()

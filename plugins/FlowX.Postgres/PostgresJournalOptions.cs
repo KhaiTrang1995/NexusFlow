@@ -47,6 +47,43 @@ public sealed record PostgresJournalOptions
     public bool CreateSchemaIfMissing { get; init; } = true;
 
     /// <summary>
+    /// Whether the adapter puts <see cref="Schema"/> on the connection as Npgsql's
+    /// <c>SearchPath</c>, which travels as a PostgreSQL startup parameter.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>On by default, because off requires the deployment to have done something.</strong>
+    /// A startup parameter is the shortest correct route to a schema and it is what every
+    /// direct connection should use.
+    /// </para>
+    /// <para>
+    /// <strong>It has to be switchable because a connection pooler cannot carry it.</strong>
+    /// Reproduced on 2026-08-14 against PgBouncer 1.22: in transaction mode it refuses the
+    /// connection outright — <c>08P01: unsupported startup parameter: search_path</c> — and
+    /// its documented remedy, <c>ignore_startup_parameters = search_path</c>, makes it accept
+    /// the connection and then discard the schema, after which every statement answers
+    /// <c>42P01: relation "flow_instance" does not exist</c>. The second is the dangerous one,
+    /// because the host starts.
+    /// </para>
+    /// <para>
+    /// <strong>Turning this off means the deployment supplies the schema another way</strong>,
+    /// and one route is known to survive pooling because it is applied server-side when the
+    /// server connection is made rather than sent by the client:
+    /// <code>ALTER ROLE &lt;role&gt; SET search_path = &lt;schema&gt;</code>
+    /// Verified through PgBouncer in transaction mode with no startup parameter at all. The
+    /// pooler's own database line carries the same effect. **The migrating role needs it
+    /// too**, since migrations run unqualified statements against the same schema.
+    /// </para>
+    /// <para>
+    /// <strong>This does not rescue <see cref="TenantIsolation.Schema"/>.</strong> There the
+    /// schema is chosen per tenant as the connection is opened, and no server-side default can
+    /// express a value that varies per client. Schema-per-tenant behind a transaction pooler
+    /// remains unsupported, and <c>CHECKLIST</c> blocker B-6 says so.
+    /// </para>
+    /// </remarks>
+    public bool SetSearchPathOnConnection { get; init; } = true;
+
+    /// <summary>
     /// Whether <see cref="PostgresRecoveryIndex"/> is registered, and with it whether a host
     /// on this store sweeps for instances a dead node left behind.
     /// </summary>

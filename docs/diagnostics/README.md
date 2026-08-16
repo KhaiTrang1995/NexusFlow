@@ -349,8 +349,15 @@ to `PolicyChain`'s two rejections — and all three are errors.
 | [FLOWX1043](FLOWX1043.md) | Poll interval outlasts the poll's own timeout | A `PollUntil` whose first gap is longer than its budget: the instance wakes past it, so the loop is one call followed by the `OnTimeout` block — and one attempt then an escalation reads in a journal exactly like a dependency that never answered |
 | [FLOWX1044](FLOWX1044.md) | `PollUntil` requires an idempotent capability | **A second OCR job, a second charge or a second reservation on every attempt of a loop built to make tens of them** — the repetition `Idempotent = true` declares to be safe, asked of a construct that repeats after every success rather than only after a failure |
 | [FLOWX1050](FLOWX1050.md) | Step binds a contract only one of a poll's two endings produces | **A flow that works when the webhook fires and throws when the polling does its job** — `.OrSignal<TSignal>()` seeds the bag only on the ending a delivery caused, and both endings continue at the same step |
+| [FLOWX1051](FLOWX1051.md) | `Hedge` requires an idempotent capability | **Two charges in flight at once, and the flow keeping whichever answers first** — a hedge is a deliberate concurrent duplicate under one idempotency key, so `FLOWX1014`'s requirement is asked of the loser as well as the winner |
+| [FLOWX1052](FLOWX1052.md) | `Fallback` constant is not the step's output contract | **A degraded mode that survives the outage and then throws** — the value is filed in the state bag under its own type, so a constant of any other type is an answer no later step can bind |
+| [FLOWX1053](FLOWX1053.md) | `Fallback` requires a capability with no side effects | **A reservation reported as made when it was not, with no compensation registered for the half of it that was** — `FLOWX1018`'s objection to caching a write, reaching the same capability by the other door |
+| [FLOWX1054](FLOWX1054.md) | Declared wait is not a compile-time constant | **A flow that silently stops publishing how long it waits** — the manifest's `timeout` is folded at build time, so a wait read from configuration is omitted, `flowx diff` has no window to compare, and the build stays green. It happened to the repository's only producer of the field |
+| [FLOWX1055](FLOWX1055.md) | Event schema version is not a semantic version | **A declared version that is silently not the published one** — `[EventSchema]`'s value is stamped on the manifest entry and on every outbox row, and `flowx diff` keys an event on the major it parses out of it. A value that is not SemVer leaves the contract publishing `1.0.0` while its author believes it publishes something else, and a subscriber pinned to the wrong major is told nothing |
+| [FLOWX1056](FLOWX1056.md) | `Validate` is declared over a contract with no validation rules | **A stage-3 policy that examines every input and refuses none** — the rules are the annotations on the step's input contract, read at build time and emitted into the dispatcher, so a contract that declares none leaves a policy the manifest publishes, the engine calls and nothing enforces |
+| [FLOWX1057](FLOWX1057.md) | `Consent` is declared with no purpose | **A stage-2 gate the manifest publishes and the engine skips** — a blank purpose is read as *no consent declared*, not as a comparison nobody can satisfy, so the step is dispatched to every caller while `flowx.manifest.json` goes on listing an `Identity` policy on it |
 
-The next is `FLOWX1051`. The range is `FLOWX1001`–`FLOWX1099`.
+The next is `FLOWX1058`. The range is `FLOWX1001`–`FLOWX1099`.
 
 > **Every id above is raised and covered by a test.** Four of them were not, until
 > WP-13: `FLOWX1014` and `FLOWX1018` ask what is in a policy set, and nothing resolved
@@ -671,7 +678,79 @@ two rules would otherwise give opposite advice. An **error**, for `FLOWX1020`'s 
 nothing probabilistic about which paths exist.
 [ADR-0066](../adr/ADR-0066-a-polls-second-ending-is-a-row.md) is the decision it belongs to.
 
-The next is `FLOWX1051`. The range is `FLOWX1001`–`FLOWX1099`.
+**`FLOWX1051` is claimed** — *`Hedge` requires an idempotent capability*: a hedge issues a second
+call while the first is still outstanding, under the same `ctx.IdempotencyKey`, and keeps whichever
+answers first. It is **not** `FLOWX1014`, and the difference is what the page has to say. That rule
+covers the two kinds that *re*-dispatch after a failure and argues duplicate charges; this one is
+about a duplicate that is deliberate, simultaneous, and running right now — and it needs the
+declaration for a second reason a retry does not have, because the loser is cancelled after it may
+already have written its answer into the state bag, so the two answers must be interchangeable and
+not merely both harmless. `FLOWX1044` is the precedent for the id: a construct that repeats for a
+different reason gets a page that says which reason.
+[ADR-0078](../adr/ADR-0078-stage-four-nests-six-kinds.md) §2.4 is the decision it belongs to.
+
+**`FLOWX1052` is claimed** — *`Fallback` constant is not the step's output contract*:
+`.Fallback(value)` captures the constant under `FlowContext.Set<TValue>`, which keys the state bag
+by `typeof(TValue)`, so a constant of any other type is filed where no later step binds. It is not
+`FLOWX1020`, which asks whether *any* step produces a contract a later step consumes: here the step
+does produce it, and the policy declared to stand in for it does not. Reported at build time because
+a fallback fires exactly when a dependency is down, which is the worst moment to discover the
+degraded mode does not fit.
+
+**`FLOWX1053` is claimed** — *`Fallback` requires a capability with no side effects*: a fallback
+returns a success without performing the effect, which is `FLOWX1018`'s sentence with the store
+taken out of it. A separate id rather than a second `FLOWX1018` message for the reason
+`FLOWX1044` is separate from `FLOWX1014`: the two rules share an argument and not a subject, and a
+team suppressing "caching a write" must not thereby suppress "answering for a write". It also
+carries half a rule `FLOWX1018` does not have — a degraded step registers no compensation — which
+is what makes it an error rather than a warning.
+
+**`FLOWX1054` is claimed** — *declared wait is not a compile-time constant*: an
+`.AwaitSignal<T>(timeout)` or a `.PollUntil<T>(…, timeout:)` whose duration
+[ADR-0021](../adr/ADR-0021-manifest-publishes-the-wait.md) §2.2 cannot fold, so the step's
+`timeout` is omitted from the manifest. **The rule reports the silence that record chose**, and
+it is `FLOWX1036`'s shape one artifact over: that rule says a whole policy set reaches nothing,
+this one says a declared wait reaches the plan and not the published contract. It is raised from
+`FlowAnalyzer.FoldDeclaredWait`'s own answer rather than from a second reading of the expression,
+so a rule and a field that must agree are one decision — the arrangement `FLOWX1043` did not need,
+because that rule *reads* two folded durations rather than deciding whether either can be folded.
+A **warning**, and neither the determinism set's escalation nor `FLOWX1044`'s error transfers: an
+unfoldable wait executes correctly under every profile, because the plan carries the expression
+verbatim and generated C# evaluates it. What it loses is contract visibility, which is
+`FLOWX1043`'s severity for `FLOWX1043`'s reason.
+
+**`FLOWX1055` is claimed** — *event schema version is not a semantic version*: an
+`[EventSchema("…")]` whose value `EventSchemaReader` cannot read. The attribute is the only
+thing that makes `event.schemaVersion` vary — before it, every event in every manifest FlowX
+produced carried the constant `1.0.0`, which is
+[ADR-0017 F2](../adr/ADR-0017-manifest-v1-freeze-criteria.md#f2--no-field-is-emitted-as-a-constant-standing-in-for-a-fact)'s
+whole subject — so an unreadable value is not an unset one: the contract goes on publishing
+`1.0.0`, in the manifest and on every outbox row, while its author reads the attribute and
+believes otherwise. It is `FLOWX1045`'s shape one artifact over — a property of the
+*declaration*, checked where it is written, because the value is a compile-time constant the
+whole way — and differs in where the damage lands: an unreadable jitter stops a deployment
+becoming ready, and this ships. An **error** for that reason, and because the fix is to write
+three numbers. It is none of the reservations.
+**`FLOWX1056` is claimed** — *`Validate` is declared over a contract with no validation rules*:
+the policy's rules are the annotations on the step's input contract, so a contract that declares
+none leaves nothing to emit and the declaration admits everything. It is `FLOWX1032`'s finding
+under a new id — *a declared policy nothing executes* — narrowed from a whole kind to one
+declaration, which is why that id stays retired rather than being revived: the old rule reported a
+kind the runtime had no code for, and this one reports a set the runtime has code for and the
+contract gave nothing to run. An **error**, unlike `FLOWX1035`'s comparable "this policy does
+nothing": a one-attempt compensation retry still dispatches the undo, and an unenforced validation
+is the reason a step is allowed to trust its input.
+**`FLOWX1057` is claimed** — *`Consent` is declared with no purpose*: `FLOWX1056`'s objection one
+stage up, and it fails in the surprising direction. An empty purpose reads like a gate nobody can
+pass and is the opposite — `StepPolicy.HasConsent` treats a blank purpose as no consent declared,
+so the step is dispatched to everybody while the manifest goes on publishing an `Identity`-stage
+policy on it. Reading it as refusing instead was rejected: a purpose nobody wrote is not a purpose
+nobody may satisfy, and a step taken out of service by a typo is worse than a build error. An
+**error**, which is what every rule in the stage-2 family is —
+`SafetyDiagnosticsAreErrorsRatherThanWarnings` holds `FLOWX1010`, `FLOWX1030` and `FLOWX1037` to
+the same line. It is none of the reservations.
+
+The next is `FLOWX1058`. The range is `FLOWX1001`–`FLOWX1099`.
 
 ## Adding a diagnostic
 

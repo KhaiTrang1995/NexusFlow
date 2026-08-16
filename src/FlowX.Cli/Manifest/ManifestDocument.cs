@@ -180,6 +180,21 @@ public sealed class ManifestStep
     [JsonPropertyName("compensation")]
     public string? Compensation { get; set; }
 
+    /// <summary>The capability a declared fallback asks, as <c>id@version</c>.</summary>
+    /// <remarks>
+    /// Read and, like <see cref="Compensation"/>, deliberately not compared. ADR-0021 §2.4
+    /// keeps <c>flowx diff</c> out of a flow's steps with one narrow exception — a wait, which
+    /// is an inbound address — and a fallback is not one: it is a dependency, and a dependency
+    /// is classified where every other dependency is, in the capability inventory. Adding a
+    /// fallback that names a capability new to the build is <c>FLOWX-DIFF-101</c>, Additive,
+    /// which is right because nothing that worked stops working; changing one so that a
+    /// capability leaves the build is <c>FLOWX-DIFF-010</c>, Breaking, which is right for the
+    /// same reason it is breaking anywhere else. Parsed anyway so that a consumer reading this
+    /// document — and the test that pins the placement — sees what the manifest published.
+    /// </remarks>
+    [JsonPropertyName("fallback")]
+    public string? Fallback { get; set; }
+
     /// <summary>Event published.</summary>
     [JsonPropertyName("event")]
     public string? Event { get; set; }

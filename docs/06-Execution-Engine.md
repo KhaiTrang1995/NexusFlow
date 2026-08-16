@@ -514,7 +514,16 @@ Rules:
 
 1. Compensation runs in **strict reverse order** of *successfully completed*
    steps only. A failed step is never compensated (it did not take effect — or if
-   it did, that step is not idempotent and that is a capability bug).
+   it did, that step is not idempotent and that is a capability bug). *A step a
+   `Fallback` answered for is not compensated either, and it is the one case where
+   "successfully completed" and "its capability ran" come apart: neither the step's
+   capability nor the fallback's may declare a side effect
+   ([`FLOWX1053`](diagnostics/FLOWX1053.md)), so there is nothing an undo could
+   reverse. Since WP-80 a resumed instance agrees — the degraded row names the
+   capability that answered, so the stack a new node rebuilds is the stack the
+   forward path built; a **constant** fallback writes no such name and is the
+   exception [ADR-0079](adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md)
+   §2.5 records.*
 2. Each compensation carries its **own** policy chain — `StepNode.CompensationPolicies`,
    resolved against the *compensating* capability, so `FLOWX1014`'s idempotency
    rule is checked against the thing that would actually be run twice.

@@ -25,9 +25,14 @@ internal sealed class FlowStreamService : BackgroundService
     private readonly FlowStreamScan? _scan;
     private readonly TimeSpan _interval;
 
+    /// <summary>Whether this host was deployed to run this sweep at all.</summary>
+    private readonly bool _deployed;
+
     public FlowStreamService(FlowStreamScan? scan, FlowXOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+
+        _deployed = options.Sweeps.HasFlag(HostSweeps.Stream);
 
         _scan = scan;
         _interval = options.StreamScanInterval;
@@ -35,6 +40,14 @@ internal sealed class FlowStreamService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // What this host was deployed to do, which is a different question from what it
+        // is capable of doing -- HostSweeps says why the two are kept apart. Checked
+        // before anything else so an opted-out host starts no loop and takes no lock.
+        if (!_deployed)
+        {
+            return;
+        }
+
         try
         {
             while (!stoppingToken.IsCancellationRequested)

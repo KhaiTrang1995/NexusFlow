@@ -143,7 +143,7 @@ wearing a per-tenant declaration.
 * **The skip argued in ADR-0025 §2.1 stops being a skip**, and FLOWX1032 narrows again — from
   four kinds to the two the other stages still leave inert.
 * **The refusal is observable.** `flowx_ratelimit_rejected_total` is emitted with the `scope`
-  and `tenant` labels [10 §9](../10-Policy-Framework.md#9-observing-policies--four-of-seven-metrics-emit)
+  and `tenant` labels [10 §9](../10-Policy-Framework.md#9-observing-policies--seven-of-seven-metrics-emit)
   froze, which [ADR-0026](ADR-0026-policy-metrics-name-only-what-executes.md) left unnamed
   precisely because "a rate-limit rejection counter describes a decision no code makes". Code
   now makes it.

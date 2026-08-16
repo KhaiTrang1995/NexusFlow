@@ -66,6 +66,53 @@ public sealed class FlowXOptions
     /// </remarks>
     public TimeSpan LeaseRenewalInterval { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Which background sweeps this host performs. Defaults to <see cref="HostSweeps.All"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The switch that makes the three-role topology in <c>docs/18-Cloud-Native.md §1</c>
+    /// configurable rather than merely drawn. One image, three deployments:
+    /// <c>HostSweeps.None</c> for an API host, <see cref="HostSweeps.Ingestion"/> for a
+    /// worker, <see cref="HostSweeps.Durability"/> for a scheduler.
+    /// </para>
+    /// <para>
+    /// This says what a host <em>should</em> do. Each scan still decides what it <em>can</em>
+    /// do — a recovery sweep needs a journal whatever this says — and
+    /// <see cref="HostSweeps"/> explains why the two are kept apart.
+    /// </para>
+    /// </remarks>
+    public HostSweeps Sweeps { get; set; } = HostSweeps.All;
+
+    /// <summary>
+    /// How many items this node admits and has not yet finished. Unbounded by default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one thing that sheds.</strong> Every admission seam — <c>FlowBusScan</c>'s,
+    /// <c>FlowStreamScan</c>'s, and both HTTP surfaces — takes a slot from
+    /// <see cref="FlowAdmissionGate"/> around the run and refuses when there is none, in the
+    /// shape the offering transport can act on: a broker keeps its backlog, a window keeps its
+    /// checkpoint, a caller gets <c>429</c> with a <c>Retry-After</c>. Nothing is lost, because
+    /// nothing shed was ever recorded as having run.
+    /// </para>
+    /// <para>
+    /// <strong><see langword="null"/> rather than a sentinel, and unbounded rather than a
+    /// number.</strong> A hosting option added to a release must not change what a running
+    /// deployment does — <see cref="Sweeps"/>'s rule — and any default number here would be a
+    /// guess at somebody else's hardware that silently caps their throughput on upgrade. Absent
+    /// is the only honest default, and it costs nothing to read: the unbounded path allocates
+    /// nothing and takes no interlocked operation (budget <strong>B6</strong>).
+    /// </para>
+    /// <para>
+    /// <strong>It bounds admissions, not executions.</strong> A recovery resume and a delivered
+    /// signal are work this node already accepted and journalled, so neither takes a slot —
+    /// shedding them would strand an instance that has nowhere else to go. <c>FlowHost.InFlight</c>
+    /// is the count that includes them, and it exists for the drain rather than for a ceiling.
+    /// </para>
+    /// </remarks>
+    public int? MaxInFlightAdmissions { get; set; }
+
     /// <summary>How often this node looks for instances a dead node left running.</summary>
     /// <remarks>
     /// Applied with jitter, and that is not decoration: identical nodes on an identical
@@ -591,6 +638,22 @@ internal sealed class FlowXOptionsValidator : IValidateOptions<FlowXOptions>
                 $"{nameof(FlowXOptions.StreamReadBudget)} must be greater than zero; it is " +
                 $"{options.StreamReadBudget}. Zero is not 'stream subscriptions disabled' — " +
                 "register no stream subscription for that.");
+        }
+
+        // Absent is unbounded and is the default; present and not positive is the one spelling
+        // that cannot mean anything. Zero would admit nothing ever — a deployment that runs no
+        // work at all, which nobody configures on purpose and which would present as the sweeps
+        // silently doing nothing rather than as a misconfiguration.
+        // A lifted comparison rather than a pattern and a conjunction, which is what keeps this
+        // one branch like every other check here: null <= 0 is false, so "unset" falls through
+        // to the unbounded default without a second test saying so.
+        if (options.MaxInFlightAdmissions <= 0)
+        {
+            failures.Add(
+                $"{nameof(FlowXOptions.MaxInFlightAdmissions)} must be greater than zero when it " +
+                $"is set; it is {options.MaxInFlightAdmissions.GetValueOrDefault().ToString(System.Globalization.CultureInfo.InvariantCulture)}. " +
+                "Leave it unset for no ceiling — that is the default, and zero is not a spelling " +
+                "of it: zero sheds every item this node is ever offered.");
         }
 
         if (options.MaxConcurrentRecoveries <= 0)

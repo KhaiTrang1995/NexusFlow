@@ -548,7 +548,12 @@ public static class FlowEmitter
             writer.Line("return StepJournalEntry.OfEvent(new OutboxWrite");
             writer.OpenBrace();
             writer.Line("Type = " + Quote(staging.Step.EventType!) + ",");
-            writer.Line("SchemaVersion = " + Quote(ManifestWriter.EventSchemaVersion) + ",");
+            // The contract's own [EventSchema], or 1.0.0 where it declares none — the same
+            // resolution ManifestWriter makes for the events array, off the same field. A
+            // manifest saying 2.0.0 over rows saying 1.0.0 is ADR-0017 F2's defect.
+            writer.Line(
+                "SchemaVersion = " +
+                Quote(staging.Step.EventSchemaVersion ?? ManifestWriter.EventSchemaVersion) + ",");
             writer.Line();
             writer.Line("// Per-key ordering, and the key is the instance: ADR-0018 offers no");
             writer.Line("// global order, so this is the ordering a consumer actually gets.");
@@ -1515,6 +1520,29 @@ public static class FlowEmitter
                         authorizationMode: null,
                         authorizationValue: null) + ";");
             }
+
+            if (step.FallbackCapability is { } fallback)
+            {
+                // The fallback's own declarations, for the reason the compensation's are: what
+                // PolicyChain checks the side-effect rule against, and what the engine writes
+                // on the degraded row, has to be the author's [Capability] rather than a
+                // literal this layer invented.
+                writer.Line(
+                    "public static readonly CapabilityDescriptor Step" + step.Index + "Fallback = " +
+                    DescriptorCall(
+                        fallback.CapabilityId!,
+                        fallback.CapabilityVersion!,
+                        fallback.IsIdempotent,
+                        fallback.SideEffects,
+
+                        // Deliberately no stance, on the compensation's precedent and for the
+                        // same reason: StepNode.ForCapability resolves the node's stance from
+                        // the forward capability alone, so a stance here would reach no
+                        // decision and would read as though it did. A fallback runs for the
+                        // principal the step already admitted.
+                        authorizationMode: null,
+                        authorizationValue: null) + ";");
+            }
         }
 
         writer.CloseBrace();
@@ -1908,7 +1936,15 @@ public static class FlowEmitter
         // exactly as it was.
         if (step.PolicyKinds.Any(static kind => kind != CompensationRetryKind))
         {
-            arguments += ", policies: PolicyChain.ForStep(" + set + ", " + node + ")";
+            // The third capability a set can describe, and the only one it can name without
+            // being able to resolve: PolicySet.Fallback<TCapability>() holds a Type and nothing
+            // more, because a set is built with no step in sight and reading a capability's
+            // declaration off its type at run time is what C2 refuses. Passing the descriptor
+            // here is what binds it, so StepPolicy gets an id and a version to write on a
+            // journal row (ADR-0079 §2.1).
+            var fallback = step.HasFallbackCapability ? ", " + node + "Fallback" : string.Empty;
+
+            arguments += ", policies: PolicyChain.ForStep(" + set + ", " + node + fallback + ")";
         }
 
         // A compensation chain with no compensation to wrap is refused by StepNode, and there
@@ -1969,6 +2005,8 @@ public static class FlowEmitter
         writer.Line();
         EmitDispatcherExecute(writer, flow);
         writer.Line();
+        EmitDispatcherFallback(writer, flow);
+        writer.Line();
         EmitDispatcherCompensate(writer, flow);
         writer.Line();
         EmitDispatcherEvaluate(writer, flow);
@@ -2015,6 +2053,125 @@ public static class FlowEmitter
             EmitDispatcherCache(writer, cached);
         }
 
+        var validated = ValidatedSteps(flow);
+
+        if (validated.Count > 0)
+        {
+            writer.Line();
+            EmitDispatcherValidation(writer, validated);
+        }
+
+        writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// The capability steps that declare a <c>Validate</c> and have a rule to enforce.
+    /// </summary>
+    /// <remarks>
+    /// Both terms. A step with no <c>Validate</c> is not checked because nobody asked, and a
+    /// step whose contract yielded no rule cannot be checked at all — which is
+    /// <c>FLOWX1056</c>, an error, so a compiled flow never reaches the second case. The
+    /// condition is written anyway rather than assumed, because a generator that emitted an
+    /// empty <c>case</c> for a step the analyzer had already refused would produce a method
+    /// that admits every input if the rule were ever downgraded.
+    /// </remarks>
+    private static List<StepModel> ValidatedSteps(FlowModel flow) =>
+        flow.AllSteps
+            .Where(s => s.Kind == StepKindModel.Capability
+                        && s.PolicyKinds.Contains(ValidateKind)
+                        && s.ValidationRules.Length > 0)
+            .OrderBy(s => s.Index)
+            .ToList();
+
+    /// <summary>
+    /// The policy kind whose enforcement this emitter writes rather than passes through.
+    /// </summary>
+    /// <remarks>
+    /// Every other kind reaches the plan as a descriptor the runtime resolves. This one has no
+    /// parameters to carry: <c>docs/10 §3</c> says its rules are "generated from contract
+    /// annotations", so the declaration is the request and the emitted <c>Validate</c> switch
+    /// below is the whole of the policy. A literal for <see cref="CompensationRetryKind"/>'s
+    /// reason, and pinned the same way.
+    /// </remarks>
+    public const string ValidateKind = "Validate";
+
+    /// <summary>
+    /// Emits <c>Validate</c>: the checks a step's input contract declares, as comparisons.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the whole of stage 3's validation, and there is no run-time half.</strong>
+    /// <c>ValidationRuleReader</c> turned each <c>[Required]</c>, <c>[Range]</c> and length
+    /// annotation into a condition and a message when the manifest was built; what is written
+    /// here is those conditions, in order, against a local. Nothing reflects, nothing walks a
+    /// type, and a trimmed or NativeAOT build behaves identically — which is constraint
+    /// <strong>C2</strong> and is why the policy could not have been a run-time
+    /// <c>Validator.TryValidateObject</c>.
+    /// </para>
+    /// <para>
+    /// <strong>The input is read once into a local.</strong> A mapped step's input is the
+    /// author's mapping expression, and a condition that named it twice would run the mapping
+    /// twice — which FLOWX1011 makes safe and still leaves as work nobody asked for, and which
+    /// a rule with two bounds does by construction.
+    /// </para>
+    /// <para>
+    /// <strong>The list is allocated only when something fails.</strong> The common answer is
+    /// <c>ValidationOutcome.Valid</c>, which is a struct with a null list, so a validated step
+    /// that passes costs the comparisons and nothing else — the same bargain the engine's
+    /// policy path strikes one level up.
+    /// </para>
+    /// <para>
+    /// <strong>No message carries a value.</strong> Each is a constant string the reader built
+    /// from the rule's own declared bounds. There is no interpolation of the member into any of
+    /// them, so a <c>[Sensitive]</c> member cannot leak through a refusal — see
+    /// <c>FieldError</c>, and <c>ValidationRedactionTests</c>, which reads the generated source
+    /// and asserts it.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherValidation(SourceWriter writer, List<StepModel> validated)
+    {
+        writer.Line("/// <inheritdoc />");
+        writer.Line("public ValidationOutcome Validate(int stepIndex, FlowContext ctx)");
+        writer.OpenBrace();
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in validated)
+        {
+            writer.Line("case " + step.Index + ":");
+            writer.OpenBrace();
+            writer.Line("var input = " + InputExpression(step) + ";");
+            writer.Line("System.Collections.Generic.List<FieldError>? failures = null;");
+            writer.Line();
+
+            foreach (var rule in step.ValidationRules)
+            {
+                writer.Line("if (" + rule.Condition.Replace(
+                    Model.ValidationRuleModel.InputPlaceholder, "input") + ")");
+                writer.OpenBrace();
+                writer.Line("(failures ??= []).Add(new FieldError(");
+                writer.Line("    " + Quote(rule.Field) + ",");
+                writer.Line("    " + Quote(rule.Rule) + ",");
+                writer.Line("    " + Quote(rule.Message) + "));");
+                writer.CloseBrace();
+                writer.Line();
+            }
+
+            writer.Line("return failures is null");
+            writer.Line("    ? ValidationOutcome.Valid");
+            writer.Line("    : ValidationOutcome.Invalid(failures);");
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("// A step this flow does not validate. The engine asks only for the ones");
+        writer.Line("// it does, and Unavailable is a refusal rather than an admission — so a");
+        writer.Line("// plan and a dispatcher from different builds fail loudly.");
+        writer.Line("return ValidationOutcome.Unavailable;");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
         writer.CloseBrace();
     }
 
@@ -2467,6 +2624,89 @@ public static class FlowEmitter
         }
 
         writer.Line("return StepOutcome.Success;");
+    }
+
+    /// <summary>
+    /// Emits <c>ExecuteFallbackAsync</c>: the dispatch a capability-valued fallback needs, and
+    /// the seam that made one buildable.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Keyed by the step's index, not by an index of its own.</strong> A fallback
+    /// capability is not a step — it has no place in the graph's layout, no <c>case</c> in the
+    /// step switch and nothing that jumps to it — so the engine names it the only way it can:
+    /// "step N's fallback". ADR-0078 §3.1 recorded the absence of exactly this method as the
+    /// first of four blockers, and nothing about it is an engine change: the wall was that only
+    /// generated code may name a contract type or call <c>ctx.Set&lt;T&gt;</c>, and this is
+    /// generated code doing both.
+    /// </para>
+    /// <para>
+    /// <strong>The input is bound the step's way, not the fallback's.</strong>
+    /// <see cref="InputExpression"/> is shared with the forward call and with the compensation,
+    /// so a mapped step re-runs its mapping and an unmapped one reads the bag by type — and the
+    /// fallback therefore sees what the primary saw. FLOWX1052 has already made the two
+    /// contracts agree on the way out; a fallback that wanted a different way in would be a
+    /// second capability pretending to be a substitute for the first.
+    /// </para>
+    /// <para>
+    /// Emitted only where a step declares one. A flow with no capability fallback inherits
+    /// <c>IStepDispatcher</c>'s default, which throws — the arrangement <c>BeginSubFlow</c>
+    /// already uses, and the reason nothing that ships depends on that default.
+    /// </para>
+    /// </remarks>
+    private static void EmitDispatcherFallback(SourceWriter writer, FlowModel flow)
+    {
+        var fallbacks = flow.AllSteps
+            .Where(static s => s.HasFallbackCapability)
+            .OrderBy(static s => s.Index)
+            .ToList();
+
+        if (fallbacks.Count == 0)
+        {
+            return;
+        }
+
+        writer.Line("/// <inheritdoc />");
+        writer.Line(
+            "public async ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct)");
+        writer.OpenBrace();
+        writer.Line("switch (stepIndex)");
+        writer.OpenBrace();
+
+        foreach (var step in fallbacks)
+        {
+            var fallback = step.FallbackCapability!;
+
+            writer.Line("case " + step.Index + ":");
+            writer.OpenBrace();
+
+            EmitCapabilityInvocation(
+                writer,
+                FieldName(fallback.CapabilityTypeName!),
+                InputExpression(step),
+
+                // The step's output contract, and deliberately not the fallback's own. They are
+                // the same type — FLOWX1052 refuses the build otherwise — and naming the step's
+                // is what says which of the two the equality is *for*: the bag is keyed by what
+                // the next step binds.
+                step.CapabilityOutput,
+                fallback.Location);
+
+            writer.CloseBrace();
+        }
+
+        writer.Line("default:");
+        writer.OpenBrace();
+        writer.Line("throw new ArgumentOutOfRangeException(");
+        writer.Line("    nameof(stepIndex),");
+        writer.Line("    stepIndex,");
+        writer.Line("    \"Step index does not name a step with a capability fallback in the \" +");
+        writer.Line("    \"compiled plan. The plan and this dispatcher are generated together, \" +");
+        writer.Line("    \"so this means they came from different builds.\");");
+        writer.CloseBrace();
+
+        writer.CloseBrace();
+        writer.CloseBrace();
     }
 
     private static void EmitDispatcherCompensate(SourceWriter writer, FlowModel flow)

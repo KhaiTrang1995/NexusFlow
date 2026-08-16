@@ -313,7 +313,7 @@ ledger legs and the settlement write are counted by
 `flowx_policy_invocations_total` whether they fire or not — the second is the
 denominator without which the first is a number with no scale.
 
-**All seven metrics [10 §9](../../docs/10-Policy-Framework.md#9-observing-policies--six-of-seven-metrics-emit)
+**All seven metrics [10 §9](../../docs/10-Policy-Framework.md#9-observing-policies--seven-of-seven-metrics-emit)
 specifies are emitted.** This bank's rate limit publishes
 `flowx_ratelimit_rejected_total` when it refuses a caller, labelled by the declared
 scope. *This paragraph said three were missing, then two: the cache pair left the list

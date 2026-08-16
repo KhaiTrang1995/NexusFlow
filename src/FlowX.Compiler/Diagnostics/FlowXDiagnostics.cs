@@ -1699,6 +1699,281 @@ public static class FlowXDiagnostics
         "capability's own output — or supply the input explicitly with " +
         ".Step<TCapability, TStepIn>(ctx => ...).");
 
+    /// <summary>FLOWX1051 — a hedge is declared over a non-idempotent capability.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>FLOWX1014</c>'s rule, arriving at the same capability from the concurrent
+    /// side.</strong> A retry asks twice in sequence and this asks twice at once, so the
+    /// declaration that makes either safe is the same one — and a hedge needs it for a second
+    /// reason a retry does not have. A retry keeps the answer of the attempt that succeeded;
+    /// a hedge cancels the loser <em>after</em> it may already have written its result into the
+    /// state bag, so the two answers have to be interchangeable and not merely both harmless.
+    /// </para>
+    /// <para>
+    /// <strong>Its own id rather than a third <c>FLOWX1014</c> message.</strong> That rule
+    /// covers the two kinds that <em>re</em>-dispatch after a failure, and its page argues
+    /// duplicate charges; this one is about a duplicate that is deliberate, simultaneous and
+    /// running right now, and it is <c>FLOWX1044</c>'s precedent — a construct that repeats for
+    /// a different reason gets a page that says which reason.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor HedgeRequiresIdempotency = Create(
+        "FLOWX1051",
+        "Hedge requires an idempotent capability",
+        "Capability '{0}' declares Idempotent = false, so a Hedge policy cannot be attached",
+        "A hedge issues a second call while the first is still outstanding, under the same " +
+        "ctx.IdempotencyKey, and keeps whichever answers first — so the effect can happen " +
+        "twice at once and the answer the flow keeps may be either call's. That is what " +
+        "Idempotent = true declares to be safe, and the same promise FLOWX1014 requires of a " +
+        "retry. Declare it on the capability if a concurrent repeat is harmless, and otherwise " +
+        "bound the tail with a Timeout, which refuses a slow call rather than duplicating it.");
+
+    /// <summary>FLOWX1052 — a fallback constant is not the step's output contract.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The value is filed under its own type, so the type is the whole contract.</strong>
+    /// <c>PolicySet.Fallback&lt;TValue&gt;</c> captures the constant under
+    /// <c>FlowContext.Set&lt;TValue&gt;</c>, which keys the state bag by <c>typeof(TValue)</c>.
+    /// A constant of any other type lands under a key no later step binds, and the degraded
+    /// mode — the thing declared so that an outage is survivable — throws on the first step
+    /// that reads the step's output.
+    /// </para>
+    /// <para>
+    /// <strong>Reported here rather than left to the run time it would fail at.</strong> A
+    /// fallback fires exactly when a dependency is down, which is the worst moment to discover
+    /// that the repair does not compile in the sense that matters. The mismatch is visible in
+    /// the source: the step names its capability, the capability names its output contract, and
+    /// the set names a constant.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor FallbackMustMatchTheStepsOutput = Create(
+        "FLOWX1052",
+        "Fallback constant is not the step's output contract",
+        "Step '{0}' produces '{1}', and its Fallback declares a '{2}'",
+        "A fallback value is filed in the state bag under its own type, so a constant that is " +
+        "not the step's output contract is a degraded answer no later step can read: the flow " +
+        "survives the outage and then throws on the next ctx.Get<T>(). Declare the constant as " +
+        "the capability's output type, or move the fallback to a set applied to a step that " +
+        "produces it.");
+
+    /// <summary>FLOWX1053 — a fallback is declared over a capability with side effects.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>FLOWX1018</c>'s argument, word for word.</strong> A cache is refused on a
+    /// capability with side effects because a hit returns a success without performing the
+    /// effect; a fallback returns a success without performing the effect and without even
+    /// having a stored one to point at. The two rules are one sentence applied to the two ways
+    /// a step can be answered by something other than the capability.
+    /// </para>
+    /// <para>
+    /// <strong>And it is what makes the unwind honest.</strong> A degraded step registers no
+    /// compensation, because nothing happened for a compensation to undo — so a fallback over a
+    /// capability that <em>does</em> change the world would leave a half-made effect with
+    /// nothing pointing at it, which is <c>docs/10 §2</c>'s "compensating something that never
+    /// happened" row read backwards.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor FallbackRequiresNoSideEffects = Create(
+        "FLOWX1053",
+        "Fallback requires a capability with no side effects",
+        "Capability '{0}' declares side effects [{1}], so a Fallback policy cannot be attached",
+        "A fallback answers with a constant when the step has failed for the last time, which " +
+        "returns a success without performing the effect — FLOWX1018's objection to caching a " +
+        "write, reaching the same capability by the other door. A degraded step also registers " +
+        "no compensation, so a half-completed effect behind one would never be undone. Declare " +
+        "the fallback on the read that precedes the write, or handle the failure in the flow.");
+
+    /// <summary>FLOWX1054 — a declared wait the compiler cannot fold to a duration.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The omission
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0021-manifest-publishes-the-wait.md">ADR-0021 §2.2</a>
+    /// chose, said out loud.</strong> That record takes <c>merge</c>'s precedent — an absent
+    /// field is a consumer asking, a guessed one is a consumer misled — and it is still the
+    /// right stance for the <em>field</em>. It was the wrong stance for the <em>author</em>:
+    /// the compiler publishes nothing and says nothing, so a wait declared as a configuration
+    /// read costs the flow its <c>timeout</c> with the build green. That is not theoretical.
+    /// It happened to <c>samples/workflow</c>, the repository's only producer of the field,
+    /// and only the one test that reads it noticed.
+    /// </para>
+    /// <para>
+    /// <strong>A warning, and the stance is the catalogue's own.</strong> The set argument in
+    /// <c>docs/diagnostics/README.md</c> is <em>warning by default, error where the
+    /// compilation can prove the code is on a durable flow's replay path</em>, and that
+    /// escalation cannot apply here: an unfoldable wait executes correctly under every
+    /// profile — the plan carries the expression verbatim and generated C# evaluates it — so
+    /// there is no replay defect to escalate about. What is lost is contract visibility: the
+    /// published manifest omits the only number that says whether a wait is minutes or
+    /// quarters, and <c>FLOWX-DIFF-206</c> has nothing to compare. That is <c>FLOWX1043</c>'s
+    /// severity for <c>FLOWX1043</c>'s reason — the flow runs, and an author who genuinely
+    /// wants a wait tuned at deployment time has written one, in a way that costs a field
+    /// they should be told about. An error would refuse a flow that works.
+    /// </para>
+    /// <para>
+    /// <strong>Raised from the fold's own answer and never from a second reading of the
+    /// expression.</strong> <c>FlowAnalyzer.FoldDeclaredWait</c> reports exactly when it is
+    /// about to return <c>null</c>, so the rule and the field cannot disagree: what is
+    /// reported is precisely what is not published. A second implementation of the foldability
+    /// rule is how a diagnostic comes to fire on a wait the manifest carried anyway.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor DeclaredWaitCannotBeFolded = Create(
+        "FLOWX1054",
+        "Declared wait is not a compile-time constant",
+        "Wait '{0}' is not a compile-time constant, so this step publishes no timeout and " +
+        "flowx diff cannot compare the window — declare the duration as a constant",
+        "A declared wait reaches two artifacts. The plan carries the expression verbatim, so " +
+        "the flow waits for exactly what the source says; the manifest carries the duration " +
+        "folded at build time, because a consumer reading flowx.manifest.json has never seen " +
+        "this assembly. The compiler folds TimeSpan.Zero and TimeSpan.FromDays, FromHours, " +
+        "FromMinutes, FromSeconds and FromMilliseconds over a numeric literal, through at most " +
+        "one field or property whose declaration initialises it with one of those. Anything " +
+        "else — a method call, a conditional, a configuration or environment read — is omitted " +
+        "rather than guessed at, and the omission is silent in the published contract. Declare " +
+        "the duration as a compile-time constant, naming it as a static field or property if " +
+        "it belongs outside the flow. Suppress this rule only where the wait is deliberately " +
+        "chosen at run time and the missing timeout field is accepted.",
+        DiagnosticSeverity.Warning);
+
+    /// <summary>
+    /// FLOWX1055: an <c>[EventSchema("…")]</c> whose value is not a semantic version.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A property of the declaration, reported where it is written.</strong> The
+    /// attribute sits on the event contract, not on a flow, so the rule is raised on the type
+    /// — a contract nothing emits yet is still a declaration whose value is wrong, and finding
+    /// out when the first <c>.Emit</c> of it lands would be finding out late.
+    /// </para>
+    /// <para>
+    /// <strong>What an unreadable value costs is not an unset version.</strong> The reader
+    /// drops it and the contract publishes <c>1.0.0</c> — in the manifest's <c>events</c>
+    /// array and in the <c>schema_version</c> column of every outbox row it stages — so the
+    /// author reads <c>[EventSchema("v2")]</c> in the source and a subscriber reads
+    /// <c>1.0.0</c> on the wire. <c>flowx diff</c> keys an event on the major it parses out of
+    /// that value (<c>FLOWX-DIFF-020</c>), so the disagreement is also invisible to the gate
+    /// that exists to catch it. Publishing the rubble instead would be worse in the other
+    /// direction: a version no consumer can order against.
+    /// </para>
+    /// <para>
+    /// <strong>An error, where <see cref="ScheduleJitterCannotBeRead"/>'s argument reaches a
+    /// different conclusion for the same shape.</strong> That rule refuses a compile-time
+    /// constant a host would throw on, so the alternative to reporting it is a pod that never
+    /// becomes ready. This one ships perfectly and is wrong in a document, which is the
+    /// quieter failure and the one nothing downstream can detect — and the fix is to write
+    /// three numbers separated by dots.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor EventSchemaVersionCannotBeRead = Create(
+        "FLOWX1055",
+        "Event schema version is not a semantic version",
+        "Event contract '{0}' declares [EventSchema(\"{1}\")] and that is not a semantic " +
+        "version, so it publishes 1.0.0 in the manifest and on every outbox row",
+        "An event's schema version is SemVer 2.0 — MAJOR.MINOR.PATCH, with optional " +
+        "pre-release and build metadata — because that is what a subscriber pins against and " +
+        "what flowx diff keys an event on when it decides whether a major was bumped. A value " +
+        "the compiler cannot read is dropped rather than published, so the contract keeps " +
+        "emitting the default 1.0.0 while the source says otherwise, and every consumer of " +
+        "the manifest and of the outbox row is told the wrong number with nothing anywhere " +
+        "reporting it. Write the version as three numeric identifiers, for example \"2.0.0\", " +
+        "or omit the attribute — a contract that declares nothing publishes 1.0.0, which is " +
+        "the ordinary declaration and is not reported. A suppression buys nothing: the value " +
+        "still does not reach the document.",
+        DiagnosticSeverity.Error);
+
+    /// <summary>FLOWX1056 — a <c>Validate</c> over a contract that declares no rule to check.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one misuse of <c>Validate</c> the compiler can see, and it is the one that
+    /// matters.</strong> Every other policy carries its parameters in the declaration, so an
+    /// author who writes one gets what they asked for or a compile error from C# itself. This
+    /// one carries none: <c>docs/10 §3</c> catalogues it as "generated from contract
+    /// annotations", so the declaration is a request for whatever the contract says, and a
+    /// contract that says nothing turns the request into a policy that examines every input and
+    /// refuses none. That is a declaration that reads as satisfied and is not — the exact shape
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0025-a-partial-policy-engine-executes-stage-four-alone.md">ADR-0025</a>
+    /// refuses, and the shape <c>FLOWX1032</c> existed to report before every catalogued kind
+    /// became declarable.
+    /// </para>
+    /// <para>
+    /// <strong>An error rather than a warning</strong>, unlike <c>FLOWX1035</c>, which reports
+    /// the comparable "this policy does nothing" for a compensation retry of one attempt. The
+    /// difference is what the author is relying on. A one-attempt retry still dispatches the
+    /// undo, so the flow behaves; an unenforced validation is the reason a step is allowed to
+    /// trust its input, and stage 3 preceding stage 6 exists so that corrupt data is refused
+    /// before the side effect rather than after it. There is also no reading under which the
+    /// declaration is deliberate: an author who wants no checks writes no <c>.Validate()</c>.
+    /// </para>
+    /// <para>
+    /// <strong>It fires on "no rule the compiler could turn into a comparison", not on "no
+    /// attribute".</strong> <c>ValidationRuleReader</c> skips the annotations whose enforcement
+    /// would need a run-time parse or a walk of the caller's collection, so a contract carrying
+    /// only those reaches here — which is right: from the flow's point of view nothing is being
+    /// checked, and the remedy is the same one.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ValidateHasNothingToCheck = Create(
+        "FLOWX1056",
+        "Validate is declared over a contract with no validation rules",
+        "'{0}' declares a Validate on '{1}', whose input contract '{2}' declares no rule this " +
+        "compiler can enforce — the policy would examine every input and refuse none",
+        "A Validate has no parameters, because its rules are the annotations on the step's " +
+        "input contract: the compiler reads [Required], [Range], [StringLength], [MinLength] " +
+        "and [MaxLength] in the same pass that builds the manifest, and emits the checks into " +
+        "the generated dispatcher. A contract that declares none leaves nothing to emit, so " +
+        "the step is refused at build time rather than shipping a stage-3 policy that admits " +
+        "everything — docs/10 §2 puts Integrity before Execution precisely so that bad input " +
+        "is refused before the side effect. Fix it by annotating the members that have a rule, " +
+        "or by removing the .Validate() from the policy set. Note that [Range] over a " +
+        "non-numeric member, its (Type, string, string) constructor, and a length attribute " +
+        "over anything but a string are read as no rule: their bounds cannot be turned into a " +
+        "comparison at build time, and a run-time parse is what constraint C2 refuses.",
+        DiagnosticSeverity.Error);
+
+    /// <summary>FLOWX1057 — a <c>Consent</c> declared with no purpose to compare against.</summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>FLOWX1056</c>'s objection, one stage earlier and one argument stronger.</strong>
+    /// A <c>Validate</c> over a contract with no rules examines every input and refuses none;
+    /// a <c>Consent("")</c> compares every invocation's purpose against the empty string and
+    /// admits none — which sounds like the safe direction and is not, because
+    /// <c>StepPolicy.HasConsent</c> reads a blank purpose as <em>undeclared</em> rather than as
+    /// refusing. A purpose nobody wrote is not a purpose nobody may satisfy, so the run-time
+    /// floor lets the step through, and what ships is a stage-2 gate the manifest publishes
+    /// and the engine skips.
+    /// </para>
+    /// <para>
+    /// <strong>An error, for the reason every rule in the security family is one.</strong>
+    /// <c>SafetyDiagnosticsAreErrorsRatherThanWarnings</c> holds the line that
+    /// <c>FLOWX1010</c>, <c>FLOWX1030</c> and <c>FLOWX1037</c> already sit on: a control that
+    /// silently does not run is the failure mode
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0030-policy-stance-is-refused-at-build-time.md">ADR-0030</a>
+    /// exists over, and a warning here would make the newest member of the family the only one
+    /// a team may leave switched on.
+    /// </para>
+    /// <para>
+    /// <strong>It reads a literal and is silent on anything else</strong>, exactly as
+    /// <c>FLOWX1035</c> is about an attempt count. A purpose composed at run time is not
+    /// something this rule can evaluate, and guessing would report a set that is fine; the
+    /// run-time floor is what covers that case, by treating whatever arrives as undeclared if
+    /// it is blank rather than as a gate nobody can pass.
+    /// </para>
+    /// </remarks>
+    public static readonly DiagnosticDescriptor ConsentHasNoPurpose = Create(
+        "FLOWX1057",
+        "Consent is declared with no purpose",
+        "'{0}' declares a Consent with a blank purpose in policy set '{1}' — the gate is " +
+        "published in the manifest and skipped by the engine",
+        "A Consent names the processing purpose the step may be invoked for, and the engine " +
+        "compares it with the purpose the invocation carried on a validated claim. A blank " +
+        "purpose is read as no purpose declared, so the step is dispatched to every caller " +
+        "while the manifest publishes an Identity-stage policy on it — a control that reads " +
+        "as present and is not. Fix it by naming the purpose the step serves, or by removing " +
+        "the .Consent(...) from the policy set. A purpose is compared ordinally and in whole, " +
+        "so it is an identifier rather than a sentence, and a step that serves two purposes " +
+        "is two steps.",
+        DiagnosticSeverity.Error);
+
     /// <summary>Every descriptor, for the fitness function and for documentation generation.</summary>
     public static ImmutableArray<DiagnosticDescriptor> All { get; } = ImmutableArray.Create(
         FlowMustBePartial,
@@ -1745,7 +2020,14 @@ public static class FlowXDiagnostics
         StreamWindowArgumentCannotBeRead,
         PollIntervalOutlastsItsTimeout,
         PollRequiresIdempotency,
-        StepBindsOnlyThePollsSignal);
+        StepBindsOnlyThePollsSignal,
+        HedgeRequiresIdempotency,
+        FallbackMustMatchTheStepsOutput,
+        FallbackRequiresNoSideEffects,
+        DeclaredWaitCannotBeFolded,
+        EventSchemaVersionCannotBeRead,
+        ValidateHasNothingToCheck,
+        ConsentHasNoPurpose);
 
     private static DiagnosticDescriptor Create(
         string id,

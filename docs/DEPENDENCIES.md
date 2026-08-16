@@ -186,6 +186,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 |---|---|---|---|
 | `Azure.Core` | `MIT` | nuspec | — |
 | `Azure.Core.Amqp` | `MIT` | nuspec | — |
+| `Azure.Identity` | `MIT` | nuspec | — |
 | `Azure.Messaging.ServiceBus` | `MIT` | nuspec | — |
 | `BenchmarkDotNet` | `MIT` | nuspec | — |
 | `BenchmarkDotNet.Annotations` | `MIT` | nuspec | — |
@@ -201,6 +202,11 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `FlowX.Http` | `Apache-2.0` | first-party | — |
 | `FlowX.Mcp` | `Apache-2.0` | first-party | — |
 | `Gee.External.Capstone` | `MIT` | nuspec | — |
+| `Google.Protobuf` | `BSD-3-Clause` | nuspec | — |
+| `Grpc.Core.Api` | `Apache-2.0` | nuspec | — |
+| `Grpc.Net.Client` | `Apache-2.0` | nuspec | — |
+| `Grpc.Net.ClientFactory` | `Apache-2.0` | nuspec | — |
+| `Grpc.Net.Common` | `Apache-2.0` | nuspec | — |
 | `Humanizer.Core` | `MIT` | nuspec | — |
 | `Iced` | `MIT` | nuspec | — |
 | `Json.More.Net` | `MIT` | nuspec | — |
@@ -209,6 +215,17 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `Microsoft.AspNetCore.TestHost` | `MIT` | nuspec | — |
 | `librdkafka.redist` | `BSD-2-Clause` | read | `LICENSES.txt` |
 | `Microsoft.Azure.Amqp` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Core` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Extensions.Abstractions` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Extensions.Http` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Extensions.Rpc` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Extensions.ServiceBus` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Extensions.Timer` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Grpc` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Sdk` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Sdk.Analyzers` | `MIT` | nuspec | — |
+| `Microsoft.Azure.Functions.Worker.Sdk.Generators` | `MIT` | nuspec | — |
 | `Microsoft.Bcl.AsyncInterfaces` | `MIT` | nuspec | — |
 | `Microsoft.CodeAnalysis.Analyzers` | `MIT` | nuspec | — |
 | `Microsoft.CodeAnalysis.Common` | `MIT` | nuspec | — |
@@ -221,6 +238,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `Microsoft.Diagnostics.Tracing.TraceEvent` | `MIT` | nuspec | — |
 | `Microsoft.DotNet.ILCompiler` | `MIT` | nuspec | — |
 | `Microsoft.DotNet.PlatformAbstractions` | `MIT` | read | `LICENSE.TXT` |
+| `Microsoft.Extensions.Azure` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Configuration` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Configuration.Abstractions` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Configuration.Binder` | `MIT` | nuspec | — |
@@ -240,6 +258,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `Microsoft.Extensions.FileSystemGlobbing` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Hosting` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Hosting.Abstractions` | `MIT` | nuspec | — |
+| `Microsoft.Extensions.Http` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Logging` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Logging.Abstractions` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Logging.Configuration` | `MIT` | nuspec | — |
@@ -250,6 +269,9 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `Microsoft.Extensions.Options` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Options.ConfigurationExtensions` | `MIT` | nuspec | — |
 | `Microsoft.Extensions.Primitives` | `MIT` | nuspec | — |
+| `Microsoft.Identity.Client` | `MIT` | nuspec | — |
+| `Microsoft.Identity.Client.Extensions.Msal` | `MIT` | nuspec | — |
+| `Microsoft.IdentityModel.Abstractions` | `MIT` | nuspec | — |
 | `Microsoft.NET.ILLink.Tasks` | `MIT` | nuspec | — |
 | `Microsoft.NET.Test.Sdk` | `MIT` | nuspec | — |
 | `Microsoft.NETCore.Platforms` | `MS-DOTNET-LIBRARY` | read | `dotnet_library_license.txt` |
@@ -291,6 +313,7 @@ bump into an edit here, and a table edited on every PR is a table nobody reads �
 | `System.Reflection.MetadataLoadContext` | `MIT` | nuspec | — |
 | `System.Reflection.TypeExtensions` | `MIT` | nuspec | — |
 | `System.Runtime.CompilerServices.Unsafe` | `MIT` | nuspec | — |
+| `System.Security.Cryptography.ProtectedData` | `MIT` | nuspec | — |
 | `System.Text.Encoding.CodePages` | `MIT` | nuspec | — |
 | `System.Threading.Channels` | `MIT` | nuspec | — |
 | `System.Threading.RateLimiting` | `MIT` | nuspec | — |

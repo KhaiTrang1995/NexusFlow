@@ -71,6 +71,25 @@ public sealed class FlowCatalog
         return this;
     }
 
+    /// <summary>Every flow registered on this node, in no particular order.</summary>
+    /// <remarks>
+    /// A snapshot taken under the gate, for the reason <see cref="Count"/> takes one: a caller
+    /// enumerating the dictionary itself would be reading it while a composition root that
+    /// registers from more than one place is still writing. It is read at start-up — by the
+    /// check that refuses a node whose plans declare a store nobody registered — rather than on
+    /// any execution path, so copying the list costs nothing that matters.
+    /// </remarks>
+    public IReadOnlyList<FlowRegistration> All
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _flows.Values];
+            }
+        }
+    }
+
     /// <summary>Finds the plan an instance is pinned to, or fails to.</summary>
     /// <param name="flowId">The flow's business identity.</param>
     /// <param name="flowVersion">The exact version the instance is pinned to.</param>

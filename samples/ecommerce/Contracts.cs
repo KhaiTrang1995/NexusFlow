@@ -21,6 +21,23 @@ public sealed record Payment(string ReservationId, decimal Amount, string Receip
 public sealed record OrderPlacedResult(string OrderId, string ReceiptId);
 
 /// <summary>Published once the order is placed.</summary>
+/// <remarks>
+/// <para>
+/// <strong>The one contract in this repository that declares its own schema version.</strong>
+/// Absent <c>[EventSchema]</c> an event publishes <c>1.0.0</c>, which is what every event here
+/// published while the value was a compiler constant. This one declares a major above the
+/// default so the declaration is visible in all three places it lands: <c>event.schemaVersion</c>
+/// in <c>flowx.manifest.baseline.json</c>, the <c>schema_version</c> column of the outbox rows
+/// <c>EmitStartsAFlowTests</c> reads, and <c>FLOWX-DIFF-020</c>'s key when the baseline is
+/// compared against a build that does not declare it.
+/// </para>
+/// <para>
+/// The version is a property of this record, not of either <c>.Emit</c> call site — both
+/// <see cref="PlaceOrderFlow"/> and <see cref="ConfirmOrderFlow"/> emit it and the catalogue
+/// carries one entry, because the schema evolves with the type.
+/// </para>
+/// </remarks>
+[EventSchema("2.0.0")]
 public sealed record OrderPlaced(string OrderId, string Sku, int Quantity);
 
 /// <summary>What repricing an order produced.</summary>

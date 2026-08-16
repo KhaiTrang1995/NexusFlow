@@ -18,18 +18,28 @@ namespace FlowX.Postgres;
 /// <see cref="RoleName"/> is what puts the connection under the policies it just configured.
 /// </para>
 /// <para>
-/// <strong>Session-scoped, and re-applied on every open rather than trusted to be
-/// cleared.</strong> <c>DISCARD ALL</c> — which Npgsql sends when it returns a dirty
-/// connection to the pool — does reset both, but correctness here does not rest on that:
-/// a scoped journal writes both values on every connection it opens, so a pooled connection
-/// cannot carry one execution's tenant into the next. The alternative, <c>SET LOCAL</c> inside
-/// an explicit transaction, was rejected for the two reads that have no transaction of their
-/// own: it would buy the same guarantee for two extra round trips per read.
+/// <strong>Transaction-local, and that is a correction.</strong> Both settings were written
+/// with <c>set_config(…, false)</c> — session-scoped — once per connection open, on the
+/// argument that a scoped journal rebinds on every open, so a pooled connection cannot carry
+/// one execution's tenant into the next. That argument holds for Npgsql's pool, where a client
+/// connection <em>is</em> a server session. **It is false in front of a transaction-pooling
+/// proxy**, where one server connection is shared between clients and consecutive statements
+/// from one client can land on different ones.
 /// </para>
 /// <para>
-/// <strong>One round trip.</strong> Both settings are written by a single statement issued
-/// immediately after the connection is opened, so scoping costs a scoped deployment one
-/// message and costs an unscoped one nothing at all — <see cref="None"/> is not applied.
+/// Reproduced against PgBouncer 1.22 and PostgreSQL 16 at <c>default_pool_size = 1</c>:
+/// client A binds <c>tenant-A</c>, client B binds <c>tenant-B</c>, and A's next statement
+/// reads <c>tenant-B</c>. The same three steps direct to PostgreSQL return the empty setting,
+/// which is correct. That is a cross-tenant read, so the round-trip saving the old shape
+/// bought is not a saving worth having.
+/// </para>
+/// <para>
+/// <strong>What it costs, and who pays.</strong> <c>set_config(…, true)</c> lasts one
+/// transaction, so a scoped connection now opens one and the bind runs inside it —
+/// <see cref="ApplyAsync"/> takes the transaction rather than the connection so that a
+/// bind with nothing to belong to cannot be written. An <b>unscoped</b> deployment is
+/// untouched: <see cref="None"/> is never applied, no transaction is opened, and its reads
+/// keep their single round trip.
 /// </para>
 /// </remarks>
 internal readonly struct TenantScope
@@ -50,7 +60,7 @@ internal readonly struct TenantScope
     public const string SettingName = "flowx.tenant_id";
 
     private const string Bind =
-        "SELECT set_config(@setting, @tenant, false), set_config('role', @role, false)";
+        "SELECT set_config(@setting, @tenant, true), set_config('role', @role, true)";
 
     private readonly bool _scoped;
 
@@ -83,14 +93,24 @@ internal readonly struct TenantScope
     /// </remarks>
     public static TenantScope For(string? tenantId) => new(true, tenantId);
 
-    /// <summary>Applies this scope to a freshly opened connection.</summary>
-    /// <param name="connection">The connection to bind.</param>
+    /// <summary>Applies this scope inside the transaction that will run the work.</summary>
+    /// <param name="transaction">
+    /// The open transaction the caller's statements will run in. Taking the transaction
+    /// rather than the connection is the point: <c>set_config(…, true)</c> lasts for one
+    /// transaction, so a call with no transaction to belong to would bind a setting that is
+    /// discarded before the next statement runs. The type makes that call unwritable.
+    /// </param>
     /// <param name="cancellationToken">Cancels the call.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="transaction"/> is null.</exception>
     public async ValueTask ApplyAsync(
-        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         CancellationToken cancellationToken)
     {
-        using var command = connection.CreateCommand();
+        ArgumentNullException.ThrowIfNull(transaction);
+
+        using var command = transaction.Connection!.CreateCommand();
+
+        command.Transaction = transaction;
 
         command.CommandText = Bind;
         command.Parameters.Add(Db.Text("setting", SettingName));

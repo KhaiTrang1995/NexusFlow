@@ -96,6 +96,7 @@ public sealed class FlowEngine
     private readonly ContextPool _contexts;
     private readonly ICompensationAlertSink? _alerts;
     private readonly IRateLimiterStore? _rateLimiter;
+    private readonly IQuotaStore? _quota;
     private readonly IIdempotencyStore? _idempotency;
     private readonly IResultCache? _cache;
     private readonly IAuditSink? _audit;
@@ -142,6 +143,9 @@ public sealed class FlowEngine
     /// </param>
     /// <param name="rateLimiter">
     /// Where a declared <c>RateLimit</c>'s budget lives, or <c>null</c> when none was registered.
+    /// </param>
+    /// <param name="quota">
+    /// Where a declared <c>Quota</c>'s counters live, or <c>null</c> when none was registered.
     /// </param>
     /// <param name="idempotency">
     /// Where a declared <c>Idempotency</c> window's records live, or <c>null</c> when none was
@@ -198,7 +202,8 @@ public sealed class FlowEngine
         IIdempotencyStore? idempotency = null,
         IResultCache? cache = null,
         IAuditSink? audit = null,
-        bool breakersPerTenant = false)
+        bool breakersPerTenant = false,
+        IQuotaStore? quota = null)
     {
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPooledContexts);
@@ -208,6 +213,7 @@ public sealed class FlowEngine
         _contexts = new ContextPool(maxPooledContexts);
         _alerts = alerts;
         _rateLimiter = rateLimiter;
+        _quota = quota;
         _idempotency = idempotency;
         _cache = cache;
         _audit = audit;
@@ -989,7 +995,7 @@ public sealed class FlowEngine
             // The books the loop keeps are kept anyway: the step counts as work this instance
             // has done, and a compensable one goes back on the unwind stack, because a
             // resumed flow that later fails must undo what the node before it did.
-            if (cursor.IsJournaled && cursor.Run!.Completed(cursor.Scope, i) is not null)
+            if (cursor.IsJournaled && cursor.Run!.Completed(cursor.Scope, i) is { } answered)
             {
                 completed++;
 
@@ -1007,8 +1013,21 @@ public sealed class FlowEngine
                 // 06 §7 read from the other end: a crash during compensation resumes
                 // compensation, so a step the dead node finished undoing is not put back on
                 // the stack for the new one to undo again.
+                //
+                // And except a step its fallback capability answered for, which is the same
+                // exclusion the forward path makes at `!degraded` below and had no way to
+                // make here until the row said who wrote it. Without it the two paths
+                // disagree about one step: this node would undo a capability that never ran,
+                // on the strength of a success the fallback produced, which is docs/10 §2's
+                // "compensating something that never happened" reached by the one door the
+                // fixed stage order does not close. The row's capability id is what closes
+                // it — a success this step's own capability did not write is a degraded one
+                // (ADR-0079 §2.2). A *constant* fallback writes no second identity and is
+                // therefore still indistinguishable here; §2.5 records that limit and its
+                // cost rather than leaving it to be rediscovered.
                 if (compensations is not null &&
                     step.Kind != StepKind.SubFlow &&
+                    string.Equals(answered.CapabilityId, step.Identity, StringComparison.Ordinal) &&
                     !cursor.Run!.Compensated(cursor.Scope, i))
                 {
                     context.RecordCompleted(
@@ -1199,7 +1218,11 @@ public sealed class FlowEngine
             // taken per attempt would make a RateLimit(20, PT1S) beside a Retry(3) admit
             // somewhere between seven and twenty callers a second depending on how healthy the
             // dependency was — a limit whose effective value is a function of an outage.
-            if (policy.HasRateLimit &&
+            //
+            // Two kinds share the stage and one call asks about both: the rate limit protects
+            // the dependency and the quota enforces the plan, and a caller has to satisfy both
+            // to be admitted at all.
+            if ((policy.HasRateLimit || policy.HasQuota) &&
                 await AdmitAsync(policy, context, capabilityId, ct).ConfigureAwait(false) is { } unadmitted)
             {
                 failure = unadmitted;
@@ -1232,6 +1255,35 @@ public sealed class FlowEngine
                 break;
             }
 
+            // Stage 2's other half, and the one an author declares. The stance above asks who
+            // the caller is; this asks what the call is for — GDPR Article 5(1)(b), which
+            // docs/10 §2 lists as the third term of the Identity stage and which had no
+            // surface until now.
+            //
+            // Two questions rather than one, because they are resolved from different places:
+            // a stance is derived from the capability's own declaration and a purpose is
+            // declared on the step, so there is no arrangement in which one of them could be
+            // read off the other. Neither can permit what the other refuses — a caller has to
+            // satisfy both, exactly as stage 1's two kinds are both asked.
+            //
+            // Under the same `!context.IsContinuation` guard, and for ADR-0028 §2.3's reason
+            // word for word: a timer sweep and a recovery scan carry no purpose because they
+            // carry no caller, and deciding against that absence would make `.Delay(...)` a
+            // construct no author could place before a consent-gated step and would turn a
+            // node restart into a `403`.
+            //
+            // Gated by plan.HasStepPolicies rather than by a flag of its own, which is the
+            // difference between a policy and a stance: a policy arrives on a PolicyChain that
+            // StepPolicy.From already walks, so this is ADR-0023's "widening is mechanical"
+            // once more — one field, one term in IsActive, no new plan flag.
+            if (policy.HasConsent
+                && !context.IsContinuation
+                && ConsentNotGiven(policy, context, capabilityId) is { } unconsented)
+            {
+                failure = unconsented;
+                break;
+            }
+
             // Stage 3 · Integrity. After admission and identity, before the retry loop — which is
             // ADR-0011's order and, for the retry, a correctness requirement rather than a
             // preference: a claim taken per attempt would find its own in-flight marker on
@@ -1240,6 +1292,20 @@ public sealed class FlowEngine
             // Three outcomes. A replay skips the dispatch entirely and restores what the first
             // execution produced; an in-flight repeat is refused with the holder's remaining
             // lease; a fresh key is claimed and released again below.
+            // Stage 3's first kind, and it is first inside the stage rather than beside the
+            // window by accident: docs/10 §2 lists "validation, idempotency, dedupe" in that
+            // order, and claiming a key for an input that is about to be refused would burn
+            // the caller's idempotency key on a call that never happened — so the repeat, with
+            // the payload corrected, would replay the refusal instead of running the step.
+            //
+            // The checks are the dispatcher's, because they are generated from the contract's
+            // own annotations; a dispatcher with none refuses rather than admits.
+            if (policy.Validates && ValidateStep(dispatcher, scope, i, capabilityId) is { } invalid)
+            {
+                failure = invalid;
+                break;
+            }
+
             string? idempotencyKey = null;
 
             if (policy.HasIdempotency)
@@ -1279,13 +1345,37 @@ public sealed class FlowEngine
             var attempt = 0;
             Error? stepFailure = null;
             var abandoned = false;
+            var degraded = false;
 
-            // The retry is the outermost of the four stage-4 kinds (ADR-0024), so it is a loop
-            // around the dispatch and the commit rather than something inside either. That is
+            // Resumption for the one step whose answer may not be its own capability's. A
+            // committed row under the *fallback's* id says the primary finished failing before
+            // this node existed and the degraded path already owns this step — so the retry
+            // below is skipped entirely rather than spending the author's attempts a second
+            // time on a dependency some earlier node already gave up on. The step still ends
+            // through DegradeAsync, which is what makes the resumed execution the same
+            // execution rather than a second shape of it (ADR-0079 §2.2).
+            //
+            // A synthesised failure is what carries it there, because a journal row records an
+            // outcome and never an Error — CommitStepAsync's own remarks say why — so the
+            // original refusal died with the node that saw it. It names what is known and
+            // claims nothing else.
+            var degrading = policy.FallbackDispatches
+                && cursor.IsJournaled
+                && cursor.Run!.Attempted(cursor.Scope, i, policy.FallbackCapability!.Id);
+
+            if (degrading)
+            {
+                stepFailure = FlowErrors.StepAlreadyDegrading(capabilityId, policy.FallbackCapability!.Id);
+            }
+
+            // The retry is the outermost stage-4 kind that wraps a call (ADR-0024, and ADR-0078
+            // for the two that arrived after it — only the Fallback below is further out, and
+            // it answers for the step rather than wrapping anything), so it is a loop around
+            // the dispatch and the commit rather than something inside either. That is
             // also what makes the journal's key honest: run.NextAttempt derives the attempt
             // number from the committed history, so a retried step writes one row per attempt
             // without this node having to remember a number that dies with it.
-            while (true)
+            while (!degrading)
             {
                 attempt++;
 
@@ -1341,7 +1431,7 @@ public sealed class FlowEngine
                 {
                     var refusal = await CommitStepAsync(
                         plan, dispatcher, context, scope, cursor, step, stepFailure, startedAt,
-                        capabilityVersion: null, attempt, ct)
+                        capabilityId: null, capabilityVersion: null, attempt, ct)
                         .ConfigureAwait(false);
 
                     if (refusal is not null)
@@ -1401,6 +1491,30 @@ public sealed class FlowEngine
                 await _clock.DelayAsync(backoff, ct).ConfigureAwait(false);
             }
 
+            // Stage 4 · Fallback, the outermost of the six and therefore the only one that
+            // lives out here rather than in the policed dispatch: every other kind wraps a
+            // call, and this one answers for the step after the last call has been made and
+            // refused (ADR-0078 §2.1). Consulted after the retry, so a declared fallback does
+            // not spend the attempts the author also declared.
+            if (policy.HasFallback)
+            {
+                var fallback = await DegradeAsync(
+                    plan, dispatcher, context, scope, cursor, step, policy,
+                    capabilityId, stepFailure, abandoned, attempt, ct).ConfigureAwait(false);
+
+                if (fallback.Degraded)
+                {
+                    stepFailure = null;
+                    degraded = true;
+                }
+
+                if (fallback.Refusal is { } refused)
+                {
+                    failure = refused;
+                    abandoned = true;
+                }
+            }
+
             // Stage 3 · Integrity, closing. After the retry rather than after each attempt, so
             // the record describes the step's outcome rather than one attempt's, and so a step
             // that failed twice and succeeded on the third records once.
@@ -1438,8 +1552,14 @@ public sealed class FlowEngine
 
             completed++;
 
-            if (compensations is not null)
+            if (compensations is not null && !degraded)
             {
+                // Nothing is pushed for a step the fallback answered for, and that is the other
+                // half of FLOWX1053. The capability never produced its effect — it is refused a
+                // fallback unless it has none to produce — so registering an undo would put
+                // docs/10 §2's "compensating something that never happened" row back on the
+                // table, in the one shape the fixed stage order does not already forbid.
+                //
                 // Through the context, not the stack directly: two branches can complete a
                 // compensable step at the same instant, and the context is what serialises
                 // the push. A lost push is an undo that never runs.
@@ -1485,8 +1605,21 @@ public sealed class FlowEngine
     }
 
     /// <summary>
-    /// Stage 1: takes a permit for <paramref name="capabilityId"/>, or produces the refusal.
+    /// Stage 1: asks both admission kinds about this caller, and produces the first refusal.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The rate limit first, and the order is not arbitrary.</strong> The limiter is the
+    /// cheaper question and the one that protects the dependency; the quota is the plan limit,
+    /// and spending a month's budget on a caller a burst limiter was about to refuse anyway
+    /// would bill a tenant for a call nobody made.
+    /// </para>
+    /// <para>
+    /// One method for both because they are one stage and the step loop asks one question — the
+    /// arrangement <c>ADR-0023</c> asks of every stage that lands, and the reason stage 1
+    /// growing a second kind cost the loop no second branch.
+    /// </para>
+    /// </remarks>
     /// <param name="policy">The resolved policy. <c>HasRateLimit</c> is true.</param>
     /// <param name="context">The execution, for the tenant and principal the scope keys by.</param>
     /// <param name="capabilityId">The dependency whose budget is being spent.</param>
@@ -1509,6 +1642,32 @@ public sealed class FlowEngine
     /// </para>
     /// </remarks>
     private async ValueTask<Error?> AdmitAsync(
+        StepPolicy policy,
+        FlowExecutionContext context,
+        string capabilityId,
+        CancellationToken ct)
+    {
+        if (policy.HasRateLimit &&
+            await TakeAPermitAsync(policy, context, capabilityId, ct).ConfigureAwait(false) is { } tooFast)
+        {
+            return tooFast;
+        }
+
+        return policy.HasQuota
+            ? await ChargeQuotaAsync(policy, context, capabilityId, ct).ConfigureAwait(false)
+            : null;
+    }
+
+    /// <summary>
+    /// Stage 1's first kind: takes a permit for <paramref name="capabilityId"/>, or produces the
+    /// refusal.
+    /// </summary>
+    /// <param name="policy">The resolved policy. <c>HasRateLimit</c> is true.</param>
+    /// <param name="context">The execution, for the tenant and principal the scope keys by.</param>
+    /// <param name="capabilityId">The dependency whose budget is being spent.</param>
+    /// <param name="ct">The caller's token.</param>
+    /// <returns><c>null</c> when the caller is admitted, otherwise the error the step fails with.</returns>
+    private async ValueTask<Error?> TakeAPermitAsync(
         StepPolicy policy,
         FlowExecutionContext context,
         string capabilityId,
@@ -1545,6 +1704,170 @@ public sealed class FlowEngine
         PolicyMetrics.RateLimitRefused(policy.RateScope.ToString(), context.TenantId);
 
         return FlowErrors.RateLimited(capabilityId, verdict.Value.RetryAfter);
+    }
+
+    /// <summary>
+    /// Stage 1's second kind: spends one unit of the holder's budget, or produces the refusal.
+    /// </summary>
+    /// <param name="policy">The resolved policy. <c>HasQuota</c> is true.</param>
+    /// <param name="context">The execution, for the tenant and principal the scope keys by.</param>
+    /// <param name="capabilityId">The dependency whose budget is being spent.</param>
+    /// <param name="ct">The caller's token.</param>
+    /// <returns><c>null</c> when the caller is admitted, otherwise the error the step fails with.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Three ways not to be admitted, and all three refuse</strong> — no store, a store
+    /// that said no, a store that did not answer — which is <see cref="AdmitAsync"/>'s
+    /// arrangement and is deliberately the same one. What differs is which refusal each
+    /// produces: "the plan is spent" and "the counter is unreachable" lead to opposite repairs,
+    /// exactly as they do for a limiter.
+    /// </para>
+    /// <para>
+    /// <strong>The key carries the scope's identity</strong>, so a tenant that exhausts its plan
+    /// refuses only itself. That is the whole of why this policy is in the catalogue —
+    /// <c>docs/16 §4</c>'s fairness, applied to a capability rather than to an admission.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Error?> ChargeQuotaAsync(
+        StepPolicy policy,
+        FlowExecutionContext context,
+        string capabilityId,
+        CancellationToken ct)
+    {
+        if (_quota is null)
+        {
+            return FlowErrors.QuotaStoreUnavailable(capabilityId);
+        }
+
+        var key = PolicyKeys.Quota(
+            capabilityId, policy.QuotaScope, context.TenantId, context.Principal?.Identity?.Name);
+
+        var verdict = await _quota
+            .TryConsumeAsync(key, policy.Budget, policy.QuotaPeriod, ct)
+            .ConfigureAwait(false);
+
+        if (verdict.IsFailure)
+        {
+            return FlowErrors.QuotaStoreUnavailable(capabilityId, verdict.Error);
+        }
+
+        if (verdict.Value.Admitted)
+        {
+            PolicyApplied(StepPolicy.QuotaKind, AdmissionStage, capabilityId, PolicyMetrics.OkOutcome);
+
+            return null;
+        }
+
+        // No instrument of its own. docs/10 §9's table is seven rows and a quota refusal is not
+        // one of them — flowx_policy_invocations_total already carries it with the stage and the
+        // outcome, and the denominator beside it, which is what an exhaustion rate needs. A
+        // second counter would publish the same event under a second name.
+        PolicyApplied(StepPolicy.QuotaKind, AdmissionStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+        return FlowErrors.QuotaExhausted(capabilityId, verdict.Value.RetryAfter);
+    }
+
+    /// <summary>
+    /// Stage 2's declared kind: compares the invocation's purpose with the step's, or produces
+    /// the refusal.
+    /// </summary>
+    /// <param name="policy">The resolved chain, for the purpose the step is declared to serve.</param>
+    /// <param name="context">The execution, for the purpose the invocation asserted.</param>
+    /// <param name="capabilityId">What is being gated, so a refusal names it.</param>
+    /// <returns><c>null</c> when the purpose covers the step, otherwise the refusal.</returns>
+    /// <remarks>
+    /// <para>
+    /// Synchronous, for <see cref="ValidateStep"/>'s reason and a stronger one: an
+    /// authorisation-stage decision that needed I/O is exactly what
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0030-policy-stance-is-refused-at-build-time.md">ADR-0030</a>
+    /// refused to build for the stance beside it, and a consent policy that could wait would
+    /// re-open that record rather than sit next to it. What this compares is two strings the
+    /// process already holds.
+    /// </para>
+    /// <para>
+    /// <strong>Ordinal, whole-value equality.</strong> Not a prefix, not a hierarchy, not a
+    /// case fold — <c>StepAuthorization.Grants</c> takes the same three positions about a
+    /// permission and for the same reasons: a purpose is an identifier, a contains-check turns
+    /// a limitation into a prefix model nobody chose, and a culture-aware comparison makes the
+    /// answer depend on the server's locale.
+    /// </para>
+    /// <para>
+    /// <strong>Two codes, one category.</strong> An absent purpose and a wrong one are both
+    /// <see cref="ErrorCategory.Forbidden"/> and lead to different repairs, which is exactly
+    /// the split
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0029-a-refusal-is-a-result-failure.md">ADR-0029</a>
+    /// §2.1 drew between <c>authorization.not_authenticated</c> and
+    /// <c>authorization.permission_denied</c> at this same stage.
+    /// </para>
+    /// </remarks>
+    private static Error? ConsentNotGiven(
+        StepPolicy policy,
+        FlowExecutionContext context,
+        string capabilityId)
+    {
+        var declared = policy.ConsentPurpose!;
+
+        if (string.IsNullOrWhiteSpace(context.Purpose))
+        {
+            PolicyApplied(
+                StepPolicy.ConsentKind, IdentityStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+            return FlowErrors.ConsentPurposeAbsent(capabilityId, declared);
+        }
+
+        if (!string.Equals(context.Purpose, declared, StringComparison.Ordinal))
+        {
+            PolicyApplied(
+                StepPolicy.ConsentKind, IdentityStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+            return FlowErrors.ConsentPurposeNotCovered(capabilityId, declared);
+        }
+
+        PolicyApplied(StepPolicy.ConsentKind, IdentityStage, capabilityId, PolicyMetrics.OkOutcome);
+
+        return null;
+    }
+
+    /// <summary>
+    /// Stage 3's first kind: runs the generated checks, or produces the refusal.
+    /// </summary>
+    /// <param name="dispatcher">The generated dispatcher, which owns the checks.</param>
+    /// <param name="scope">The scope the step will run under, so the input checked is the one dispatched.</param>
+    /// <param name="stepIndex">Position in the plan's step graph.</param>
+    /// <param name="capabilityId">The dependency the input was destined for.</param>
+    /// <returns><c>null</c> when the input is good, otherwise the error the step fails with.</returns>
+    /// <remarks>
+    /// Synchronous, unlike every other policy hook on this path, because the checks are
+    /// comparisons over a value the process already holds. Nothing here can wait, so nothing
+    /// here is awaited — a validated step costs no state machine.
+    /// </remarks>
+    private static Error? ValidateStep(
+        IStepDispatcher dispatcher,
+        FlowContext scope,
+        int stepIndex,
+        string capabilityId)
+    {
+        var outcome = dispatcher.Validate(stepIndex, scope);
+
+        if (!outcome.WasChecked)
+        {
+            PolicyApplied(
+                StepPolicy.ValidateKind, IntegrityStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+            return FlowErrors.ValidationUnavailable(capabilityId);
+        }
+
+        if (outcome.IsValid)
+        {
+            PolicyApplied(StepPolicy.ValidateKind, IntegrityStage, capabilityId, PolicyMetrics.OkOutcome);
+
+            return null;
+        }
+
+        PolicyApplied(
+            StepPolicy.ValidateKind, IntegrityStage, capabilityId, PolicyMetrics.RejectedOutcome);
+
+        return FlowErrors.ValidationFailed(capabilityId, outcome.Failures!);
     }
 
     /// <summary>What <see cref="BeginIdempotentAsync"/> found.</summary>
@@ -1704,6 +2027,193 @@ public sealed class FlowEngine
     /// </remarks>
     private static readonly TimeSpan MinimumIdempotencyLease = TimeSpan.FromSeconds(5);
 
+    /// <summary>What the fallback did, and what the journal said about it.</summary>
+    /// <param name="Degraded">
+    /// Whether the constant answered for the step, which is what leaves it off the unwind
+    /// stack.
+    /// </param>
+    /// <param name="Refusal">
+    /// The journal's refusal of the degraded row, which ends the flow for the reason every
+    /// refusal does: this node is no longer the writer of this instance.
+    /// </param>
+    private readonly record struct Degradation(bool Degraded, Error? Refusal);
+
+    /// <summary>
+    /// Answers for a step that has failed for the last time, and records that it did.
+    /// </summary>
+    /// <param name="plan">The flow being run, for the journal's identity.</param>
+    /// <param name="dispatcher">Asked to describe the step, because it is what knows types.</param>
+    /// <param name="context">The execution, for the non-determinism capture the row carries.</param>
+    /// <param name="scope">The view the step ran under, and the bag the constant is filed in.</param>
+    /// <param name="cursor">Which instance, and whether there is a journal at all.</param>
+    /// <param name="step">The node that has finished failing.</param>
+    /// <param name="policy">The resolved policy. <see cref="StepPolicy.HasFallback"/> is true.</param>
+    /// <param name="capabilityId">What was invoked, for the metric.</param>
+    /// <param name="failure">The step's last error, or <c>null</c> when it succeeded.</param>
+    /// <param name="abandoned">Whether this node stopped being the writer mid-step.</param>
+    /// <param name="attempt">How many attempts were made, so the row lands on the next one.</param>
+    /// <param name="ct">Cancels the store call.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Nothing is degraded after an <paramref name="abandoned"/> step.</strong> A node
+    /// that lost its lease, or a caller that went away, did not learn that the dependency
+    /// cannot answer — it learned that this node is no longer the one asking. A degraded value
+    /// written there would be a recovery scan's instance quietly continuing on two nodes.
+    /// </para>
+    /// <para>
+    /// <strong>The degraded value is committed, and it is a row of its own</strong>
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a> §2.7).
+    /// The failed attempts already have theirs; without this one the step's frontier would be a
+    /// failure while the flow ran past it, and a resumed instance would restore a state bag with
+    /// no degraded value in it and bind the next step to something no step produced. The
+    /// attempt history keeps both facts: what the dependency said, and what the flow answered.
+    /// </para>
+    /// <para>
+    /// <strong>Counted on both paths.</strong> <c>docs/10 §9</c> labels the counter by outcome,
+    /// and "the fallback fired forty times" is a different fact depending on whether the step
+    /// ran forty times or forty thousand.
+    /// </para>
+    /// <para>
+    /// <strong>Two kinds of answer, one shape of ending.</strong> A constant is filed; a
+    /// capability is dispatched through <c>ExecuteFallbackAsync</c> and files its own result.
+    /// Everything after that is identical — the same row, the same metric, the same exclusion
+    /// from the unwind stack — which is what makes <c>docs/10 §3</c>'s "capability or constant"
+    /// one policy rather than two that happen to share a name
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md">ADR-0079</a>).
+    /// </para>
+    /// <para>
+    /// <strong>A fallback that fails leaves the step failed, and leaves it failed with the
+    /// step's own error.</strong> The degraded path not saving the step does not change what
+    /// went wrong: the dependency the author declared is what stopped answering, and that is
+    /// what belongs in the caller's error and in the trace. What the fallback did is recorded
+    /// where a second fact belongs — a journal row under its own id, and an <c>exhausted</c>
+    /// outcome on the counter that already carries "this policy was asked and could not help".
+    /// </para>
+    /// </remarks>
+    private async ValueTask<Degradation> DegradeAsync(
+        ExecutionPlan plan,
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        FlowContext scope,
+        JournalCursor cursor,
+        StepNode step,
+        StepPolicy policy,
+        string capabilityId,
+        Error? failure,
+        bool abandoned,
+        int attempt,
+        CancellationToken ct)
+    {
+        if (failure is null || abandoned)
+        {
+            PolicyApplied(StepPolicy.FallbackKind, capabilityId, PolicyMetrics.OkOutcome);
+
+            return default;
+        }
+
+        // Read before the dispatch, so a fallback capability's row carries how long the
+        // fallback took rather than how long nothing took. A constant costs the same clock
+        // read it always did, and only where there is a row to put it on.
+        var startedAt = cursor.IsJournaled ? _clock.UtcNow : default;
+
+        if (policy.FallbackDispatches)
+        {
+            var declined = await AskFallbackAsync(dispatcher, step, scope, ct).ConfigureAwait(false);
+
+            if (declined is not null)
+            {
+                // Counted as `exhausted` rather than given a label of its own: that is already
+                // "the policy was asked, used what it had, and the step still failed", which is
+                // exactly what has happened. A degraded mode that itself failed is the series
+                // an operator watches beside `degraded` to know whether the second dependency
+                // is any healthier than the first.
+                PolicyApplied(StepPolicy.FallbackKind, capabilityId, PolicyMetrics.ExhaustedOutcome);
+
+                // Under the fallback's own id, for the reason the success row is: the history
+                // has to show that the degraded path was tried here and did not work, or the
+                // next node resumes into a retry the author already spent.
+                var unrecorded = cursor.IsJournaled
+                    ? await CommitStepAsync(
+                        plan, dispatcher, context, scope, cursor, step, declined, startedAt,
+                        policy.FallbackCapability!.Id, policy.FallbackCapability.Version,
+                        attempt + 1, ct).ConfigureAwait(false)
+                    : null;
+
+                return new Degradation(false, unrecorded);
+            }
+        }
+        else
+        {
+            // The one place a value enters the state bag without a capability having produced
+            // it. It is typed at the declaration site (FallbackValue.Of) and its shape is
+            // refused at build time by FLOWX1052, so what lands here is the contract the next
+            // step binds. A fallback capability needs none of this: the generated dispatcher
+            // wrote its answer under the same contract, which is what the seam is for.
+            policy.Fallback!.ApplyTo(scope);
+        }
+
+        PolicyApplied(StepPolicy.FallbackKind, capabilityId, PolicyMetrics.DegradedOutcome);
+
+        var refusal = cursor.IsJournaled
+            ? await CommitStepAsync(
+                plan, dispatcher, context, scope, cursor, step, failure: null, startedAt,
+                policy.FallbackCapability?.Id, policy.FallbackCapability?.Version,
+                attempt + 1, ct).ConfigureAwait(false)
+            : null;
+
+        return new Degradation(true, refusal);
+    }
+
+    /// <summary>
+    /// Asks the step's fallback capability, and converts anything it does wrong into an error.
+    /// </summary>
+    /// <param name="dispatcher">The generated code that knows the fallback's types.</param>
+    /// <param name="step">The node being answered for; its index is what names the fallback.</param>
+    /// <param name="scope">The view the step ran under, and the bag the answer is filed in.</param>
+    /// <param name="ct">The caller's token.</param>
+    /// <returns><c>null</c> when the fallback answered, otherwise why it did not.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>A cancellation is a refusal here, not a rethrow.</strong> Everywhere else in the
+    /// step loop an <see cref="OperationCanceledException"/> means the caller went away and the
+    /// completed work still has to unwind, so it takes the abandonment path. This call is
+    /// already on the failure path: the step has failed, the flow is deciding whether it can
+    /// carry on degraded, and the answer to "the deadline ran out while we asked the second
+    /// dependency" is that it cannot. Reported as an error keeps the step's own failure the one
+    /// the caller sees, which is what the fallback failing means.
+    /// </para>
+    /// <para>
+    /// The general catch is the same bargain the dispatch above strikes, for the same reason: a
+    /// capability that throws is a defect, and letting it escape from here would skip the
+    /// unwind that the steps before this one need.
+    /// </para>
+    /// </remarks>
+    private static async ValueTask<Error?> AskFallbackAsync(
+        IStepDispatcher dispatcher,
+        StepNode step,
+        FlowContext scope,
+        CancellationToken ct)
+    {
+        try
+        {
+            var outcome = await dispatcher
+                .ExecuteFallbackAsync(step.Index, scope, ct)
+                .ConfigureAwait(false);
+
+            return outcome.Error;
+        }
+        catch (OperationCanceledException)
+        {
+            return FlowErrors.Cancelled(step.Identity);
+        }
+#pragma warning disable CA1031 // A capability that throws is a defect; converted rather than
+        catch (Exception exception)  //   allowed to kill the trigger's consumer loop, exactly
+        {                            //   as the forward dispatch converts one.
+            return FlowErrors.Unhandled(step.Identity, exception);
+        }
+#pragma warning restore CA1031
+    }
+
     /// <summary>
     /// Dispatches one attempt at a step through its declared stage-4 policies.
     /// </summary>
@@ -1716,9 +2226,259 @@ public sealed class FlowEngine
     /// <param name="ct">The caller's token, kept distinguishable from the timeout's.</param>
     /// <remarks>
     /// <para>
+    /// <strong>One attempt at the step, which is not the same as one call.</strong> A declared
+    /// <c>Hedge</c> makes an attempt a race between up to <c>maxAttempts</c> calls, each of
+    /// which goes through the breaker, the bulkhead and the timeout on its own — so this method
+    /// is the fork in <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>'s
+    /// nesting and <see cref="DispatchGuardedAsync"/> is one branch of it. A step with no hedge
+    /// reaches the guarded path directly and runs exactly the code it always did.
+    /// </para>
+    /// </remarks>
+    private ValueTask<StepOutcome> DispatchPolicedAsync(
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        StepNode step,
+        StepPolicy policy,
+        int index,
+        FlowContext scope,
+        CancellationToken ct) =>
+        policy.HasHedge
+            ? DispatchHedgedAsync(dispatcher, context, step, policy, index, scope, ct)
+            : DispatchGuardedAsync(dispatcher, context, step, policy, index, scope, ct);
+
+    /// <summary>
+    /// Races up to <see cref="StepPolicy.HedgeAttempts"/> calls at the step, and answers with
+    /// the first that succeeded.
+    /// </summary>
+    /// <param name="dispatcher">Invokes the capability.</param>
+    /// <param name="context">The flow's context, for the deadline each call's timeout is clamped to.</param>
+    /// <param name="step">The node being run.</param>
+    /// <param name="policy">The resolved policy. <see cref="StepPolicy.HasHedge"/> is true.</param>
+    /// <param name="index">Position in the plan's step graph.</param>
+    /// <param name="scope">The context the capability sees — an iteration's, inside a loop.</param>
+    /// <param name="ct">The caller's token, kept distinguishable from the race's.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A hedge reacts to silence, and a retry reacts to a failure.</strong> The next
+    /// call is issued when the outstanding ones have said nothing for
+    /// <see cref="StepPolicy.HedgeAfter"/> — and immediately when one of them has failed, because
+    /// then there is nothing left to wait for. The first success wins and the losers are
+    /// cancelled; a loser's cancellation is not an outcome and is not counted, which is what
+    /// keeps a hedge that worked from reading as a step that was cancelled.
+    /// </para>
+    /// <para>
+    /// <strong>Every call is a whole guarded call.</strong> Each takes its own bulkhead permit,
+    /// arms its own timeout and is counted by the breaker on its own, because a hedge genuinely
+    /// puts two calls on the dependency and a policy that pretended otherwise would bound the
+    /// wrong number. That is why the hedge sits outside the other three
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a> §2.2).
+    /// </para>
+    /// <para>
+    /// <strong>This method allocates, on <see cref="RunParallelAsync"/>'s terms.</strong> A
+    /// linked source, a task per call and the awaiters behind them are what concurrency costs.
+    /// Budget B2 is untouched because nothing here is reachable without a declared hedge.
+    /// </para>
+    /// </remarks>
+    private async ValueTask<StepOutcome> DispatchHedgedAsync(
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        StepNode step,
+        StepPolicy policy,
+        int index,
+        FlowContext scope,
+        CancellationToken ct)
+    {
+        var capabilityId = step.Identity;
+        var race = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var running = new List<Task<StepOutcome?>>(policy.HedgeAttempts);
+        var issued = 0;
+
+        // Every call failed and none was the last word until the attempts ran out. Seeded with
+        // a refusal that cannot be returned: the loop below issues at least one call, and a
+        // call either succeeds, fails, or is cancelled by a success.
+        var last = StepOutcome.Failed(FlowErrors.StepTimedOut(capabilityId, policy.HedgeAfter));
+
+        try
+        {
+            while (true)
+            {
+                running.Add(HedgedCallAsync(dispatcher, context, step, policy, index, scope, race.Token, ct));
+                issued++;
+
+                // The wait that makes this a hedge rather than a fan-out. Armed only while
+                // there is another call to issue — on the last one there is nothing to wait for
+                // but the calls themselves — and only while every call is still outstanding: a
+                // capability that answered synchronously has already said whatever it is going
+                // to, and arming a timer to notice its silence would cost every fast step a
+                // timer registration to measure a delay that has already elapsed.
+                var hedge = issued < policy.HedgeAttempts && !running.Exists(static call => call.IsCompleted)
+                    ? _clock.DelayAsync(policy.HedgeAfter, race.Token).AsTask()
+                    : null;
+
+                while (running.Count > 0)
+                {
+                    var finished = hedge is null
+                        ? await Task.WhenAny(running).ConfigureAwait(false)
+                        : await Task.WhenAny([.. running, hedge]).ConfigureAwait(false);
+
+                    if (ReferenceEquals(finished, hedge))
+                    {
+                        // Silence for long enough. Issue the next call beside the ones still
+                        // running rather than in place of them: the outstanding call may still
+                        // be the one that answers, and cancelling it would turn a hedge into a
+                        // retry that gives up on work already half done.
+                        break;
+                    }
+
+                    var completed = (Task<StepOutcome?>)finished;
+
+                    running.Remove(completed);
+
+                    // Awaited rather than read off .Result, so the cancellation a loser threw
+                    // arrives here as the null the helper turned it into.
+                    if (await completed.ConfigureAwait(false) is not { } outcome)
+                    {
+                        continue;
+                    }
+
+                    if (outcome.Error is null)
+                    {
+                        PolicyApplied(StepPolicy.HedgeKind, capabilityId, PolicyMetrics.OkOutcome);
+
+                        return outcome;
+                    }
+
+                    last = outcome;
+
+                    // A call that has already failed is not silence, so the next one — if the
+                    // author allowed one — is issued now instead of after the delay.
+                    if (issued < policy.HedgeAttempts)
+                    {
+                        break;
+                    }
+                }
+
+                if (issued >= policy.HedgeAttempts && running.Count == 0)
+                {
+                    PolicyApplied(StepPolicy.HedgeKind, capabilityId, PolicyMetrics.ExhaustedOutcome);
+
+                    return last;
+                }
+            }
+        }
+        finally
+        {
+            // Whatever ended the race — a success, an exhausted set of attempts, or the caller
+            // going away — the calls still running have lost and are told so. The source is
+            // disposed behind them rather than here: a loser is inside
+            // CreateLinkedTokenSource(race.Token) at this instant, and disposing under it is
+            // how a cancelled call becomes an ObjectDisposedException in somebody's log.
+            await race.CancelAsync().ConfigureAwait(false);
+            Abandon(running, race);
+        }
+    }
+
+    /// <summary>
+    /// One call inside a hedged race: the guarded dispatch, with a loser's cancellation turned
+    /// into "said nothing" rather than into a failure.
+    /// </summary>
+    /// <param name="dispatcher">Invokes the capability.</param>
+    /// <param name="context">The flow's context, for the deadline the timeout is clamped to.</param>
+    /// <param name="step">The node being run.</param>
+    /// <param name="policy">The resolved policy. <see cref="StepPolicy.HasHedge"/> is true.</param>
+    /// <param name="index">Position in the plan's step graph.</param>
+    /// <param name="scope">The context the capability sees — an iteration's, inside a loop.</param>
+    /// <param name="raceToken">Cancelled when another call has already answered.</param>
+    /// <param name="ct">The caller's own token, which still ends the step.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Nothing but the caller's cancellation escapes as an exception.</strong> A losing
+    /// call's task is left to finish after this method has returned its winner, so a task that
+    /// faulted would be an unobserved exception on the finalizer thread. A capability that
+    /// throws becomes the same <c>capability.unhandled</c> the step loop's own catch produces,
+    /// so the winning call reports a defect exactly as an unhedged one does.
+    /// </para>
+    /// </remarks>
+    private async Task<StepOutcome?> HedgedCallAsync(
+        IStepDispatcher dispatcher,
+        FlowExecutionContext context,
+        StepNode step,
+        StepPolicy policy,
+        int index,
+        FlowContext scope,
+        CancellationToken raceToken,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await DispatchGuardedAsync(dispatcher, context, step, policy, index, scope, raceToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // This call lost. Silence, not a failure: counting it would make a hedge that saved
+            // the step look like a step that was cancelled, and returning it could hand the
+            // flow a cancellation the winner had already answered.
+            return null;
+        }
+#pragma warning disable CA1031 // The step loop's own catch, moved inside the race for the
+        catch (Exception exception) //   reason given above: a losing call's task must never
+        {                           //   fault, and the winner's defect must read the same as
+            return StepOutcome.Failed( //   it does on the unhedged path.
+                FlowErrors.Unhandled(step.Identity, exception));
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Lets the losing calls finish unwatched, and disposes the race once they have.
+    /// </summary>
+    /// <param name="running">The calls still outstanding when the race ended.</param>
+    /// <param name="race">The source they hold a token from.</param>
+    /// <remarks>
+    /// The alternative is to await them, which is the one thing a hedge exists not to do: the
+    /// tail this policy cuts is exactly the call that has not come back. Their exceptions are
+    /// observed here so that a loser cannot bring the process down, and the source outlives
+    /// them so that a cancelled call never registers against a disposed one.
+    /// </remarks>
+    private static void Abandon(List<Task<StepOutcome?>> running, CancellationTokenSource race)
+    {
+        if (running.Count == 0)
+        {
+            race.Dispose();
+            return;
+        }
+
+        _ = Task.WhenAll(running).ContinueWith(
+            static (finished, source) =>
+            {
+                _ = finished.Exception;
+                ((CancellationTokenSource)source!).Dispose();
+            },
+            race,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Runs one call at a step through the three stage-4 kinds that wrap a single invocation.
+    /// </summary>
+    /// <param name="dispatcher">Invokes the capability.</param>
+    /// <param name="context">The flow's context, for the deadline the timeout is clamped to.</param>
+    /// <param name="step">The node being run, for the capability its gates are keyed by.</param>
+    /// <param name="policy">The resolved policy. Never <see cref="StepPolicy.None"/>.</param>
+    /// <param name="index">Position in the plan's step graph.</param>
+    /// <param name="scope">The context the capability sees — an iteration's, inside a loop.</param>
+    /// <param name="ct">
+    /// The caller's token, or a hedged race's, kept distinguishable from the timeout's.
+    /// </param>
+    /// <remarks>
+    /// <para>
     /// <strong>The nesting is
     /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0024-stage-four-is-a-fixed-nesting.md">ADR-0024</a>'s,
-    /// read from the inside out.</strong> The retry is the caller's loop; what is left here is
+    /// read from the inside out.</strong> The retry is the caller's loop and the hedge is the
+    /// caller's race; what is left here is
     /// <c>CircuitBreaker { Bulkhead { Timeout { capability } } }</c>. The breaker is asked
     /// first so that an open one refuses without taking a permit — the other way round, a
     /// dependency that is down would hold every permit in the pool for as long as it takes each
@@ -1741,7 +2501,7 @@ public sealed class FlowEngine
     /// an open breaker self-sustaining, which is a breaker that never closes.
     /// </para>
     /// </remarks>
-    private async ValueTask<StepOutcome> DispatchPolicedAsync(
+    private async ValueTask<StepOutcome> DispatchGuardedAsync(
         IStepDispatcher dispatcher,
         FlowExecutionContext context,
         StepNode step,
@@ -2320,6 +3080,18 @@ public sealed class FlowEngine
     /// <summary>Stage 1, as a metric label.</summary>
     private static readonly string AdmissionStage = nameof(PolicyStage.Admission);
 
+    /// <summary>Stage 2, as a metric label.</summary>
+    /// <remarks>
+    /// The stage the authorisation stance is also decided in, and the stance is deliberately
+    /// not counted here. <c>flowx_policy_invocations_total</c> counts <em>declared policies
+    /// the engine applied</em>, and a stance is derived rather than declared —
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>'s
+    /// rule that a metric names only what executes, read the other way round: emitting a
+    /// `kind="Authorize"` series would publish a policy no author can find in a
+    /// <c>PolicySet</c> and no manifest lists among a step's policies.
+    /// </remarks>
+    private static readonly string IdentityStage = nameof(PolicyStage.Identity);
+
     /// <summary>Stage 3, as a metric label.</summary>
     private static readonly string IntegrityStage = nameof(PolicyStage.Integrity);
 
@@ -2550,9 +3322,17 @@ public sealed class FlowEngine
     /// <param name="step">The node that just finished.</param>
     /// <param name="failure">The step's error, or <c>null</c> when it succeeded.</param>
     /// <param name="startedAt">When the attempt began, for the recorded duration.</param>
+    /// <param name="capabilityId">
+    /// The capability to record as having run, or <c>null</c> for the step's own. Supplied only
+    /// by <see cref="DegradeAsync"/>, and it is the whole of a degraded execution's identity:
+    /// the key stays ADR-0015's four parts and the column beside it says which capability
+    /// answered, exactly as <c>docs/06 §7</c> rule 6 already has a compensation row name the
+    /// capability that reversed rather than the one it reversed (ADR-0079 §2.2).
+    /// </param>
     /// <param name="capabilityVersion">
-    /// The resolved version to record. Supplied by the caller only for a sub-flow, where the
-    /// meaningful version is the child flow's rather than a capability's.
+    /// The resolved version to record. Supplied by the caller for a sub-flow, where the
+    /// meaningful version is the child flow's rather than a capability's, and for a fallback,
+    /// where it is the answering capability's.
     /// </param>
     /// <param name="attempt">
     /// Which attempt at this step this node is committing, counting from one. Added to the
@@ -2606,6 +3386,7 @@ public sealed class FlowEngine
         StepNode step,
         Error? failure,
         DateTimeOffset startedAt,
+        string? capabilityId,
         string? capabilityVersion,
         int attempt,
         CancellationToken ct)
@@ -2642,7 +3423,7 @@ public sealed class FlowEngine
                 step.Index,
                 run.NextAttempt(cursor.Scope, step.Index) + attempt - 1),
             Token = run.Token,
-            CapabilityId = step.Identity,
+            CapabilityId = capabilityId ?? step.Identity,
             CapabilityVersion = capabilityVersion ?? step.Capability?.Version ?? plan.Flow.Version,
             Outcome = failure is null ? JournalOutcome.Success : JournalOutcome.Failure,
             Result = entry.Result,
@@ -3315,7 +4096,8 @@ public sealed class FlowEngine
             // same mechanism an AwaitSignal's own row uses.
             var refusal = await CommitStepAsync(
                 plan, dispatcher, context, scope, cursor, step,
-                failure: null, startedAt: _clock.UtcNow, capabilityVersion: null, attempt: 1, ct)
+                failure: null, startedAt: _clock.UtcNow, capabilityId: null,
+                capabilityVersion: null, attempt: 1, ct)
                 .ConfigureAwait(false);
 
             return refusal is not null
@@ -3634,7 +4416,15 @@ public sealed class FlowEngine
                     context.CorrelationId,
                     context.IdempotencyKey,
                     context.TenantId,
-                    step.Mode == SubFlowMode.Detached ? null : context.Deadline),
+                    step.Mode == SubFlowMode.Detached ? null : context.Deadline,
+
+                    // The purpose is carried for the same reason the correlation, the tenant
+                    // and the idempotency key are: it describes the operation, and composing
+                    // a flow out of two does not make it two operations. A child that lost it
+                    // would refuse every consent-gated step the moment somebody extracted a
+                    // sub-flow, which would make the policy a fact about how the graph was
+                    // factored rather than about what the call is for.
+                    Purpose: context.Purpose),
                 _clock,
                 source.Dispatcher,
                 context.Depth + 1);
@@ -3856,7 +4646,7 @@ public sealed class FlowEngine
         return cursor.IsJournaled
             ? await CommitStepAsync(
                 plan, dispatcher, context, scope, cursor, step, failure, startedAt,
-                source.Plan.Flow.Version, attempt: 1, ct).ConfigureAwait(false)
+                capabilityId: null, source.Plan.Flow.Version, attempt: 1, ct).ConfigureAwait(false)
             : null;
     }
 

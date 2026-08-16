@@ -96,7 +96,12 @@ public static class FlowXServiceCollectionExtensions
                 // A breaker per tenant only where the deployment already bounds tenants against
                 // each other. A shared breaker protects a shared downstream faster; this is the
                 // deployment that said its downstreams are not shared.
-                options.TenantIsolation != TenantIsolation.None && options.Fairness.IsEnabled);
+                options.TenantIsolation != TenantIsolation.None && options.Fairness.IsEnabled,
+
+                // Stage 1's second store. Separate from the limiter above because a token
+                // bucket and a fixed window are two arithmetics over one server, and a step
+                // declaring a Quota with none registered is refused rather than admitted.
+                provider.GetService<IQuotaStore>());
         });
 
         // The catalogue is registered whether or not anything is put in it. It is only read
@@ -133,16 +138,22 @@ public static class FlowXServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowRecoveryService>(
             static provider => new FlowRecoveryService(
                 ResolveScan(provider),
-                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+                provider.GetService<ISweepSignal>())));
 
         // A second loop rather than a second query on the first, because they are two sweeps
         // over disjoint sets of rows on two intervals a deployment may reasonably set apart —
         // and because a host that can wake parked instances but cannot take over abandoned
         // ones, or the reverse, is a configuration each store decides for itself.
+        //
+        // The wake is resolved optionally, like the stores: absent is the ordinary configuration
+        // and is every release before this one — the loop waits out its interval and the sweep is
+        // untouched. A store that supplies one only ever shortens that wait.
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowTimerService>(
             static provider => new FlowTimerService(
                 ResolveTimerScan(provider),
-                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+                provider.GetService<ISweepSignal>())));
 
         // Registered whether or not anything is put in it, for FlowCatalog's reason: the sweep
         // over an empty catalogue is not enabled, which is the same answer as a node that fires
@@ -189,7 +200,8 @@ public static class FlowXServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FlowChangeService>(
             static provider => new FlowChangeService(
                 ResolveChangeScan(provider),
-                provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+                provider.GetRequiredService<IOptions<FlowXOptions>>().Value,
+                provider.GetService<ISweepSignal>())));
 
         // Registered whether or not anything is put in it, for FlowScheduleCatalog's reason.
         services.TryAddSingleton<FlowStreamCatalog>();
@@ -202,6 +214,18 @@ public static class FlowXServiceCollectionExtensions
             static provider => new FlowStreamService(
                 ResolveStreamScan(provider),
                 provider.GetRequiredService<IOptions<FlowXOptions>>().Value)));
+
+        // The doors a pushed item comes through, assembled from the same private resolution the
+        // six hosted services use. Registered whether or not anything pushes: a host that only
+        // sweeps never resolves it, and one that scales to zero has no hosted service to reach
+        // the seams through at all (FlowPushSeams says why the scans are not services of their
+        // own).
+        services.TryAddSingleton(static provider => new FlowPushSeams(
+            provider.GetRequiredService<FlowHost>(),
+            provider.GetRequiredService<FlowBusCatalog>(),
+            ResolveBusScan(provider),
+            ResolveScheduleScan(provider),
+            ResolveChangeScan(provider)));
 
         services.TryAddSingleton<FlowXHealthCheck>();
 
@@ -356,8 +380,7 @@ public static class FlowXServiceCollectionExtensions
     /// </remarks>
     private static FlowBusScan? ResolveBusScan(IServiceProvider provider)
     {
-        if (provider.GetService<IBusConsumer>() is not { } consumer ||
-            ResolveDurability(provider) is not { } durability)
+        if (ResolveDurability(provider) is not { } durability)
         {
             return null;
         }
@@ -365,7 +388,13 @@ public static class FlowXServiceCollectionExtensions
         return new FlowBusScan(
             provider.GetRequiredService<FlowHost>(),
             provider.GetRequiredService<FlowBusCatalog>(),
-            consumer,
+
+            // Optional since the push seam landed, and the remark above is now one way to be
+            // null rather than two. A host with no broker still holds every decision a delivery
+            // needs, because a serverless platform pulls on its behalf and hands the message to
+            // FlowBusScan.AdmitAsync — so the object exists and FlowBusScan.IsEnabled, which
+            // reads the consumer, is what keeps the pull loop from running over nothing.
+            provider.GetService<IBusConsumer>(),
             durability,
             provider.GetRequiredService<IOptions<FlowXOptions>>().Value);
     }
@@ -749,8 +778,15 @@ internal sealed class FlowXLifecycleService : IHostedService
     private readonly FlowHost _host;
     private readonly FlowXOptions _options;
     private readonly IRateLimiterStore? _limiter;
+    private readonly FlowCatalog? _catalog;
+    private readonly IQuotaStore? _quota;
 
-    public FlowXLifecycleService(FlowHost host, IOptions<FlowXOptions> options, IRateLimiterStore? limiter = null)
+    public FlowXLifecycleService(
+        FlowHost host,
+        IOptions<FlowXOptions> options,
+        IRateLimiterStore? limiter = null,
+        FlowCatalog? catalog = null,
+        IQuotaStore? quota = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(options);
@@ -758,6 +794,8 @@ internal sealed class FlowXLifecycleService : IHostedService
         _host = host;
         _options = options.Value;
         _limiter = limiter;
+        _catalog = catalog;
+        _quota = quota;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -782,8 +820,54 @@ internal sealed class FlowXLifecycleService : IHostedService
                 "limiter, or remove the bound.");
         }
 
+        // The same check for the step-level policy, and the earliest moment anything can make
+        // it. A DI registration is invisible to the compiler, so FLOWX1056's build-time shape is
+        // not available here: what is available is the plans this node actually carries, read
+        // once, after the composition root has finished registering them. A quota with no store
+        // refuses every call it is declared on (ADR-0040 §2.2 applied to the second stage-1
+        // kind), and a pod that never becomes ready is the cheaper failure.
+        if (_quota is null && _catalog is not null && FirstQuotaWithoutAStore() is { } unbacked)
+        {
+            throw new InvalidOperationException(
+                $"Flow '{unbacked}' declares a Quota on one of its steps and no IQuotaStore is " +
+                "registered, so no budget could be consulted and every call to that step would " +
+                "be refused. A long-window budget each node kept for itself would be the " +
+                "declared figure times the replica count (ADR-0040): register a shared store — " +
+                "AddFlowXPostgresPolicyStores() is one — or remove the policy.");
+        }
+
         _host.MarkReady();
         return Task.CompletedTask;
+    }
+
+    /// <summary>The first registered flow declaring a quota, or null when none does.</summary>
+    /// <remarks>
+    /// The first rather than all of them, for the reason FLOWX1040 names one marked member:
+    /// one is enough to refuse the node, and the author's next question is which flow, not how
+    /// many. Gated on <c>HasStepPolicies</c> first, so a node whose flows declare no policy at
+    /// all walks no graph.
+    /// </remarks>
+    private string? FirstQuotaWithoutAStore()
+    {
+        foreach (var registration in _catalog!.All)
+        {
+            var plan = registration.Plan;
+
+            if (!plan.HasStepPolicies)
+            {
+                continue;
+            }
+
+            foreach (var step in plan.Graph.Steps)
+            {
+                if (step.StepPolicy.HasQuota)
+                {
+                    return plan.Flow.Id;
+                }
+            }
+        }
+
+        return null;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)

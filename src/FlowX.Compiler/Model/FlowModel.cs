@@ -83,7 +83,17 @@ public sealed class FlowModel
             .ToList();
 
         ReferencedCapabilities = allSteps
-            .SelectMany(step => new[] { step.CapabilityTypeName, step.CompensationTypeName })
+            .SelectMany(step => new[]
+            {
+                step.CapabilityTypeName,
+                step.CompensationTypeName,
+
+                // A fallback capability is injected like any other, because it is one: the
+                // dispatcher holds it in a field of its own type and calls it from
+                // ExecuteFallbackAsync. It has no step index, which is exactly why it cannot
+                // ride in on CapabilityTypeName.
+                step.FallbackCapability?.CapabilityTypeName,
+            })
             .Where(name => name != null)
             .Select(name => name!)
             .Distinct(System.StringComparer.Ordinal)

@@ -413,6 +413,96 @@ public sealed class ManifestDiffTests
         NotFired(report, "FLOWX-DIFF-010");
     }
 
+    /// <summary>
+    /// A step gaining a fallback capability is Additive, and it is Additive for a reason.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The placement is deliberate and the rule that makes it is deliberately not a
+    /// new one.</strong> ADR-0021 §2.4 keeps <c>flowx diff</c> out of a flow's <c>steps</c>
+    /// with one narrow exception — a declared wait, which is an inbound address — and a
+    /// fallback is not one. It is a dependency, and a dependency is classified where every
+    /// other dependency is: in the capability inventory the manifest already publishes and
+    /// this file already has four rules over
+    /// (<a href="../../docs/adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md">ADR-0079</a> §2.4).
+    /// </para>
+    /// <para>
+    /// Additive is the right severity by <see cref="DiffSeverity.Additive"/>'s own definition:
+    /// nothing that worked stops working. A step that used to fail when its dependency was
+    /// down now answers degraded, which is strictly more behaviour and breaks no consumer.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AddingAFallbackCapabilityIsAdditiveRatherThanBreaking()
+    {
+        var report = Diff(candidate =>
+        {
+            Flow(candidate, "order.place").Steps[0].Fallback = "rating.cached@1.0.0";
+
+            candidate.Capabilities.Add(new ManifestCapability
+            {
+                Id = "rating.cached",
+                Version = "1.0.0",
+                Input = "Ordering.PlaceOrder",
+                Output = "Ordering.Rating",
+                Idempotent = true,
+            });
+        });
+
+        Fired(report, "FLOWX-DIFF-101").Subject.ShouldBe("capability rating.cached@1");
+        NotFired(report, "FLOWX-DIFF-010");
+
+        report.Findings.ShouldNotContain(
+            static finding => finding.Severity == DiffSeverity.Breaking,
+            "A degraded mode appearing breaks nobody. A gate that failed the build on it is a " +
+            "gate people route around.");
+    }
+
+    /// <summary>
+    /// Changing a fallback so its old capability leaves the build is Breaking.
+    /// </summary>
+    /// <remarks>
+    /// The other direction, and the same rule doing the work. What is breaking is not that the
+    /// declaration moved — it is that a capability this build published is gone, which is
+    /// <c>FLOWX-DIFF-010</c>'s subject exactly and means the same thing whether the capability
+    /// left a step or a fallback. A fallback swapped for another that is <em>already</em> in
+    /// the build reports nothing, which is also right: the set of dependencies did not change.
+    /// </remarks>
+    [Fact]
+    public void ChangingAFallbackSoItsCapabilityLeavesTheBuildIsBreaking()
+    {
+        var report = Diff(
+            baseline =>
+            {
+                Flow(baseline, "order.place").Steps[0].Fallback = "rating.cached@1.0.0";
+
+                baseline.Capabilities.Add(new ManifestCapability
+                {
+                    Id = "rating.cached",
+                    Version = "1.0.0",
+                    Input = "Ordering.PlaceOrder",
+                    Output = "Ordering.Rating",
+                    Idempotent = true,
+                });
+            },
+            candidate =>
+            {
+                Flow(candidate, "order.place").Steps[0].Fallback = "rating.stale@1.0.0";
+
+                candidate.Capabilities.Add(new ManifestCapability
+                {
+                    Id = "rating.stale",
+                    Version = "1.0.0",
+                    Input = "Ordering.PlaceOrder",
+                    Output = "Ordering.Rating",
+                    Idempotent = true,
+                });
+            });
+
+        Fired(report, "FLOWX-DIFF-010").Subject.ShouldBe("capability rating.cached@1");
+        Fired(report, "FLOWX-DIFF-101").Subject.ShouldBe("capability rating.stale@1");
+    }
+
     [Fact]
     public void KeepingTheOldMajorBesideANewOneIsAdditiveOnly()
     {

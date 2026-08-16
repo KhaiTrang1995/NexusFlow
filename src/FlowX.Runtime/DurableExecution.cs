@@ -302,6 +302,54 @@ public sealed class DurableExecution
     }
 
     /// <summary>
+    /// Whether a named capability has already been asked at this step in this scope, whatever
+    /// it answered.
+    /// </summary>
+    /// <param name="scope">The iteration the step ran in.</param>
+    /// <param name="stepId">The step's flat index.</param>
+    /// <param name="capabilityId">The capability to look for on the row.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one question a step's own capability id cannot answer, and the whole of why
+    /// a fallback row carries a different one.</strong> A step whose fallback capability has a
+    /// committed row here — success or failure — is a step the fallback already owns: the
+    /// primary finished failing on some node before this one, and re-dispatching it on resume
+    /// would spend the retry again and re-ask a dependency that has already been given up on.
+    /// So the loop asks this before the retry rather than after it
+    /// (<a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0079-a-fallback-capability-is-a-dispatch-of-its-own.md">ADR-0079</a> §2.2).
+    /// </para>
+    /// <para>
+    /// <strong>Any outcome, unlike <see cref="Completed"/>.</strong> A fallback that succeeded
+    /// is caught one level up, by the loop's own resume skip; what this is for is the fallback
+    /// that <em>failed</em> and left the instance to be picked up mid-degradation. Filtering to
+    /// success would make that the one case the rule misses.
+    /// </para>
+    /// </remarks>
+    internal bool Attempted(StepScope scope, int stepId, string capabilityId)
+    {
+        if (Frontier is null)
+        {
+            return false;
+        }
+
+        var committed = Frontier.Committed;
+
+        for (var i = 0; i < committed.Count; i++)
+        {
+            var step = committed[i];
+
+            if (step.Key.StepId == stepId &&
+                step.Key.Scope == scope &&
+                string.Equals(step.CapabilityId, capabilityId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// The lowest attempt of a poll whose body has not committed, and when the first one did.
     /// </summary>
     /// <param name="scope">The scope the poll node itself runs in.</param>

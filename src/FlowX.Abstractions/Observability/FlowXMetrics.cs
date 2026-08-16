@@ -4,17 +4,20 @@ namespace FlowX.Observability;
 
 /// <summary>
 /// The instruments behind <a href="../../../docs/12-Observability.md">12-Observability</a> §3's
-/// table, for the eleven rows that have a subject this repository ships.
+/// table, for the twelve rows that have a subject this repository ships.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Eleven of thirteen, and the two absences are structural.</strong>
-/// <see cref="TelemetryNames.StreamLagRecords"/> has no subject — nothing streams — and
-/// <see cref="TelemetryNames.TriggerAdmittedTotal"/> has a subject and no seam, because a
-/// <c>kind</c> label presupposes the one admission point P3 introduces. Neither is created
-/// here: an instrument that exists and is never written to publishes an empty series, and an
-/// empty series is indistinguishable from a healthy one, which is the exact failure §9's
-/// warning box describes.
+/// <strong>Twelve of thirteen, and the absence is structural.</strong>
+/// <see cref="TelemetryNames.StreamLagRecords"/> has no subject — nothing streams — so it is not
+/// created here: an instrument that exists and is never written to publishes an empty series, and
+/// an empty series is indistinguishable from a healthy one, which is the exact failure §9's
+/// warning box describes. <em>This paragraph read "eleven of thirteen" while
+/// <see cref="TelemetryNames.TriggerAdmittedTotal"/> had "a subject and no seam". The seam is
+/// <c>AdmitAsync</c>.</em> <em>It then read "twelve of thirteen, and the absences are structural"
+/// and named <see cref="TelemetryNames.TriggerRejectedTotal"/> as having "no agreed one". That
+/// expired at WP-144: the ceiling is what a rejection now is, and it is neither of the two
+/// answers that made the subject unagreed — see <see cref="TriggerRejected"/>.</em>
 /// </para>
 /// <para>
 /// <strong>Every call site checks <see cref="Instrument.Enabled"/> first.</strong> That is
@@ -80,6 +83,46 @@ public static class FlowXMetrics
         TelemetryNames.CapabilityUnhandledTotal,
         unit: null,
         "Capability invocations that threw. Expected failures are values (ADR-0007), so any of these is a defect.");
+
+    /// <summary>
+    /// Items an admission seam let into the runtime. Labels: kind, reason, tenant.
+    /// </summary>
+    /// <remarks>
+    /// Written by <c>FlowBusScan.AdmitAsync</c> and <c>FlowStreamScan.AdmitAsync</c>, which is
+    /// what makes <c>kind</c> a label rather than a wish: a sweep and a push host reach the same
+    /// decision through the same call, so one series covers both routes into a transport. An
+    /// item the seam requeued or dead-lettered is not counted here — it was not admitted.
+    /// </remarks>
+    public static Counter<long> TriggerAdmitted { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.TriggerAdmittedTotal,
+        unit: null,
+        "Items an admission seam started a flow for, or found an earlier delivery had already journalled.");
+
+    /// <summary>
+    /// Items an admission seam refused to let into the runtime. Labels: kind, reason, tenant.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The subject is the ceiling, and it is the one this counter was waiting for.</strong>
+    /// The row was left without an instrument because the seam's other two answers are a requeue
+    /// and a dead-letter, and neither is a rejection: a requeued item was not refused, it was left
+    /// with the broker to offer again, and a poison message is a different event. A shed is
+    /// neither — the item was offered, the node decided against running it, and it says so — so
+    /// <c>reason</c> carries <c>shed</c> and the series counts exactly the decisions
+    /// <c>FlowXOptions.MaxInFlightAdmissions</c> causes.
+    /// </para>
+    /// <para>
+    /// <strong>Its sum with <see cref="TriggerAdmitted"/> is the offered load, and that is what
+    /// makes it worth having.</strong> A shed item does not touch
+    /// <see cref="TriggerAdmitted"/> — putting a refusal under a counter named <c>admitted</c> is
+    /// the mislabelling that outlives everyone who could correct it — so the two series add up
+    /// rather than overlapping, and a burst is legible as the shed half of one number.
+    /// </para>
+    /// </remarks>
+    public static Counter<long> TriggerRejected { get; } = FlowXTelemetry.Meter.CreateCounter<long>(
+        TelemetryNames.TriggerRejectedTotal,
+        unit: null,
+        "Items an admission seam refused rather than running, because the node was at its in-flight ceiling.");
 
     /// <summary>How long a journal call took. Label: operation.</summary>
     public static Histogram<double> JournalCommit { get; } = FlowXTelemetry.Meter.CreateHistogram<double>(

@@ -183,7 +183,8 @@
       "sideEffects": [
         "inventory-ledger"
       ],
-      "errors": []
+      "errors": [],
+      "source": "Capabilities.cs:124"
     },
     {
       "id": "inventory.reserve",
@@ -202,7 +203,8 @@
           "code": "inventory.out_of_stock",
           "category": "Conflict"
         }
-      ]
+      ],
+      "source": "Capabilities.cs:84"
     },
     {
       "id": "order.project",
@@ -219,7 +221,8 @@
           "code": "order.event_has_no_body",
           "category": "Validation"
         }
-      ]
+      ],
+      "source": "ProjectOrderFlow.cs:71"
     },
     {
       "id": "order.reprice",
@@ -236,7 +239,8 @@
           "code": "order.event_has_no_body",
           "category": "Validation"
         }
-      ]
+      ],
+      "source": "RepriceBasket.cs:32"
     },
     {
       "id": "order.validate",
@@ -253,7 +257,8 @@
           "code": "order.invalid_quantity",
           "category": "Validation"
         }
-      ]
+      ],
+      "source": "Capabilities.cs:51"
     },
     {
       "id": "payment.capture",
@@ -274,13 +279,21 @@
           "code": "payment.declined",
           "category": "Conflict"
         }
-      ]
+      ],
+      "source": "Capabilities.cs:160"
     }
   ],
   "events": [
     {
       "type": "order.placed",
-      "schemaVersion": "1.0.0"
+      "schemaVersion": "2.0.0",
+      "producedBy": [
+        "order.confirm",
+        "order.place"
+      ],
+      "consumedBy": [
+        "order.reprice"
+      ]
     }
   ]
 }

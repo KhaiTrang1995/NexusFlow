@@ -243,6 +243,70 @@ public sealed class PolicyMetricsTests
             "A timeout that was armed and not reached still applied to the call.");
     }
 
+    /// <summary>
+    /// A fallback that answered is counted apart from one that was not needed.
+    /// </summary>
+    /// <remarks>
+    /// Two rows on the shared counter and no instrument of its own, which is
+    /// <a href="../../docs/adr/ADR-0026-policy-metrics-name-only-what-executes.md">ADR-0026</a>'s
+    /// discipline held to: docs/12 names no fallback instrument, so the kind reports through
+    /// the one that already exists. The split is what makes "what fraction of this step's
+    /// executions were answered by a constant" computable — a degraded mode nobody can see is
+    /// a degraded mode nobody fixes.
+    /// </remarks>
+    [Fact]
+    public async Task AFallbackThatAnsweredIsCountedApartFromOneThatWasNotNeeded()
+    {
+        using var recorder = new MetricRecorder();
+
+        var engine = new FlowEngine(new FakeClock(T0));
+        var plan = Plan(Forward(PolicySet.Named("f").Fallback(42)));
+
+        (await engine.ExecuteAsync(plan, new RecordingDispatcher(), Plans.Invocation, Ct))
+            .IsSuccess.ShouldBeTrue();
+
+        (await engine.ExecuteAsync(
+            plan, new RecordingDispatcher().FailAt(0, Unavailable), Plans.Invocation, Ct))
+            .IsSuccess.ShouldBeTrue();
+
+        recorder.Counter(TelemetryNames.PolicyInvocationsTotal).ShouldContain(
+            m => m.Tag(TelemetryNames.PolicyLabel) == StepPolicy.FallbackKind
+                 && m.Tag(TelemetryNames.OutcomeLabel) == PolicyMetrics.OkOutcome,
+            "The step that worked is the denominator, and the fallback was not consulted.");
+
+        recorder.Counter(TelemetryNames.PolicyInvocationsTotal).ShouldContain(
+            m => m.Tag(TelemetryNames.PolicyLabel) == StepPolicy.FallbackKind
+                 && m.Tag(TelemetryNames.OutcomeLabel) == PolicyMetrics.DegradedOutcome,
+            "and the step that failed was answered by the constant, which is the number an " +
+            "operator watches when a dashboard is green and a customer is not.");
+    }
+
+    /// <summary>A hedged race that produced an answer is counted with an ok outcome.</summary>
+    /// <remarks>
+    /// The <c>stage</c> label is <c>Resilience</c> for both new kinds, so nothing about the
+    /// series' shape changes; what is new is two more values of <c>policy</c>, which is what
+    /// ADR-0026 said an executed kind earns.
+    /// </remarks>
+    [Fact]
+    public async Task AHedgeThatProducedAnAnswerIsCounted()
+    {
+        using var recorder = new MetricRecorder();
+
+        var result = await new FlowEngine(new FakeClock(T0)).ExecuteAsync(
+            Plan(Forward(PolicySet.Named("h").Hedge(TimeSpan.FromMilliseconds(50)))),
+            new RecordingDispatcher(),
+            Plans.Invocation,
+            Ct);
+
+        result.IsSuccess.ShouldBeTrue();
+
+        recorder.Counter(TelemetryNames.PolicyInvocationsTotal).ShouldContain(
+            m => m.Tag(TelemetryNames.PolicyLabel) == StepPolicy.HedgeKind
+                 && m.Tag(TelemetryNames.OutcomeLabel) == PolicyMetrics.OkOutcome
+                 && m.Tag(TelemetryNames.StageLabel) == nameof(PolicyStage.Resilience),
+            "One count per race rather than per call, because the race is the attempt.");
+    }
+
     // ------------------------------------------------------------------ the recorder
 
     /// <summary>
@@ -260,11 +324,13 @@ public sealed class PolicyMetricsTests
     /// <para>
     /// <strong>The row <c>ADR-0026</c> declined to name.</strong> That record left
     /// <c>flowx_ratelimit_rejected_total</c> out of <c>TelemetryNames</c> entirely — not
-    /// named-and-unemitted like <c>flowx_trigger_admitted_total</c>, but absent — because "a
+    /// named-and-unemitted as <c>flowx_trigger_admitted_total</c> was, but absent — because "a
     /// rate-limit rejection counter describes a decision no code makes, so there is no name to
     /// freeze until <c>PolicyStage.Admission</c> is executed and the shape of its <c>scope</c>
     /// label is a decision somebody has made". Both halves are now true, and this is the
-    /// measurement.
+    /// measurement. <em>The comparison is now historical: the admission seam that
+    /// <c>flowx_trigger_admitted_total</c> was waiting for is <c>FlowBusScan.AdmitAsync</c>,
+    /// and the counter has a producer.</em>
     /// </para>
     /// <para>
     /// The <c>scope</c> label carries the declared <c>RateLimitScope</c> by name, which is what

@@ -571,6 +571,9 @@ Start here, in order:
 | 20 | [Roadmap](docs/20-Roadmap.md) | Risk-first delivery plan, from walking skeleton to v1 |
 | 21 | [Quality Gates](docs/21-Quality-Gates.md) | SonarQube thresholds, OWASP Top 10 mapping, SAST/DAST |
 | 26 | [CRM Sample](docs/26-CRM-Sample.md) | The CRM's C4 views, domain model, data model and sequences |
+| 27 | [CRM Reference Architecture](docs/27-CRM-Reference-Architecture.md) | A wider CRM read against what FlowX compiles |
+| 28 | [Azure Hosting](docs/28-Azure-Hosting.md) | Functions, App Service, Container Apps or AKS — scored against what the runtime needs |
+| 29 | [From Zero to Production](docs/29-From-Zero-To-Production.md) | **Start here to adopt it** — the learning path, DevSecOps on GitHub, and shipping |
 | — | [ADR index](docs/adr/README.md) | 68 decisions, each with its trade-off and its revisit trigger |
 | — | [Samples](samples/README.md) | Ten reference applications and what each one cost |
 

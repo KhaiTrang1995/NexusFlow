@@ -17,7 +17,10 @@ public sealed class CapabilityInfo
         string authorizationMode,
         string? authorizationValue,
         string inputTypeName,
-        string outputTypeName)
+        string outputTypeName,
+        string? approvedBy = null,
+        string? deprecated = null,
+        string? declarationLocation = null)
     {
         TypeName = typeName;
         Id = id;
@@ -29,6 +32,9 @@ public sealed class CapabilityInfo
         AuthorizationValue = authorizationValue;
         InputTypeName = inputTypeName;
         OutputTypeName = outputTypeName;
+        ApprovedBy = approvedBy;
+        Deprecated = deprecated;
+        DeclarationLocation = declarationLocation;
     }
 
     /// <summary>Fully-qualified type name, as the emitted code will spell it.</summary>
@@ -79,6 +85,51 @@ public sealed class CapabilityInfo
 
     /// <summary>The <c>TOut</c> of <c>ICapability&lt;TIn, TOut&gt;</c>.</summary>
     public string OutputTypeName { get; }
+
+    /// <summary>
+    /// The reviewer named by <c>[ApprovedBy]</c>, or <c>null</c> when the type carries none.
+    /// </summary>
+    /// <remarks>
+    /// The reviewer and not the date, because the manifest field is one string and the
+    /// question a reader of a <c>Public</c> capability asks is <em>who signed this off</em>.
+    /// The date stays at the declaration, where <c>PublicCapabilitiesAreReviewed</c> reads
+    /// it — publishing a second copy of it here would be two places to disagree about when
+    /// a review happened.
+    /// </remarks>
+    public string? ApprovedBy { get; }
+
+    /// <summary>
+    /// The obsoletion notice from <c>[Obsolete("...")]</c>, or <c>null</c> when the type
+    /// carries no attribute or the attribute carries no message.
+    /// </summary>
+    /// <remarks>
+    /// <strong><c>[Obsolete]</c> rather than a FlowX attribute of its own.</strong>
+    /// Deprecation already has a spelling in C#, every tool in the ecosystem understands
+    /// it, and it is the one that also warns at the call site — so a consumer inside the
+    /// same build learns from the compiler and a consumer outside it learns from this
+    /// field. Inventing <c>[Deprecated]</c> beside it would be a second vocabulary for one
+    /// fact, and <c>ADR-0017</c>'s table called that "a DSL addition" precisely because
+    /// nobody had noticed the language already had one.
+    /// <para>
+    /// A bare <c>[Obsolete]</c> yields <c>null</c>: the field publishes the notice, and an
+    /// attribute with no message declares no sentence to publish. Emitting a stand-in would
+    /// put a string in the document that nobody wrote, which is what <c>ADR-0017</c>'s
+    /// <c>F2</c> exists to refuse.
+    /// </para>
+    /// </remarks>
+    public string? Deprecated { get; }
+
+    /// <summary>
+    /// <c>file:line</c> of the capability's declaration, absolute; relativised when written.
+    /// </summary>
+    /// <remarks>
+    /// The <em>type's</em> location and not the <c>.Step&lt;T&gt;()</c> call site that
+    /// <c>StepModel.Location</c> already carries. The schema calls this field "file:line
+    /// of the declaration, so every node in the graph is navigable", and a reader who clicks a
+    /// capability entry wants the capability, not one of the flows that invokes it — which is
+    /// also why one entry can be reached from several steps and still name one place.
+    /// </remarks>
+    public string? DeclarationLocation { get; }
 }
 
 /// <summary>
@@ -93,6 +144,8 @@ public static class CapabilityReader
 {
     private const string CapabilityAttribute = "FlowX.CapabilityAttribute";
     private const string CapabilityInterface = "FlowX.ICapability`2";
+    private const string ApprovedByAttribute = "FlowX.ApprovedByAttribute";
+    private const string ObsoleteAttribute = "System.ObsoleteAttribute";
 
     /// <summary>Reads the capability metadata, or returns <c>null</c> if the type is not one.</summary>
     public static CapabilityInfo? Read(ITypeSymbol? type)
@@ -174,8 +227,52 @@ public static class CapabilityReader
             authorizationMode,
             AuthorizationValueOf(authorizationMode, permission, policy),
             contract.Input,
-            contract.Output);
+            contract.Output,
+            ReviewerOf(type),
+            ObsoletionNoticeOf(type),
+            FlowAnalyzer.FormatLocation(DeclarationOf(type)));
     }
+
+    /// <summary>The reviewer named by <c>[ApprovedBy]</c>, or <c>null</c>.</summary>
+    private static string? ReviewerOf(ITypeSymbol type)
+    {
+        var approval = type.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.ToDisplayString() == ApprovedByAttribute);
+
+        var reviewer = approval is { ConstructorArguments.Length: > 0 }
+            ? approval.ConstructorArguments[0].Value as string
+            : null;
+
+        return string.IsNullOrWhiteSpace(reviewer) ? null : reviewer;
+    }
+
+    /// <summary>The message on <c>[Obsolete(...)]</c>, or <c>null</c> when there is none.</summary>
+    private static string? ObsoletionNoticeOf(ITypeSymbol type)
+    {
+        var obsolete = type.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.ToDisplayString() == ObsoleteAttribute);
+
+        var notice = obsolete is { ConstructorArguments.Length: > 0 }
+            ? obsolete.ConstructorArguments[0].Value as string
+            : null;
+
+        return string.IsNullOrWhiteSpace(notice) ? null : notice;
+    }
+
+    /// <summary>
+    /// Where the capability is declared: the first of its source locations by path and line.
+    /// </summary>
+    /// <remarks>
+    /// Ordered rather than taken as they come, because a <c>partial</c> type has one location
+    /// per part and Roslyn does not promise which arrives first. The manifest is compared
+    /// across builds byte for byte, so an unordered pick would report a change nobody made —
+    /// the same reason <c>ManifestWriter</c> sorts everything else ordinally.
+    /// </remarks>
+    private static Location? DeclarationOf(ITypeSymbol type) => type.Locations
+        .Where(l => l.IsInSource)
+        .OrderBy(l => l.GetLineSpan().Path, System.StringComparer.Ordinal)
+        .ThenBy(l => l.GetLineSpan().StartLinePosition.Line)
+        .FirstOrDefault();
 
     /// <summary>The name the stance uses, or <c>null</c> when it uses none.</summary>
     /// <remarks>

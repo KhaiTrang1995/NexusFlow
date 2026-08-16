@@ -165,10 +165,36 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
         CancellationToken cancellationToken) =>
         CreateAsync(tenantSchemas: true, throughVersion: null, cancellationToken);
 
+    /// <summary>
+    /// Creates a schema under a name the caller chose, dropping whatever was there before.
+    /// </summary>
+    /// <param name="name">The schema name, which must be the same on every run.</param>
+    /// <param name="cancellationToken">Cancels the setup.</param>
+    /// <returns>The prepared schema.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one caller is <see cref="PooledTenantIsolationTests"/>, and the constant
+    /// name is the whole reason it exists.</strong> Every other test takes a fresh random
+    /// schema, which is the right default and is unusable behind a transaction pooler: the
+    /// schema there is resolved server-side, by a role default or the pooler's own database
+    /// line, and neither can be told a name that changes every run.
+    /// </para>
+    /// <para>
+    /// The previous run's schema is dropped rather than migrated into, because the conformance
+    /// contract requires a journal with nothing in it and a re-run over a surviving schema is
+    /// a migration no-op over yesterday's rows.
+    /// </para>
+    /// </remarks>
+    public static ValueTask<PostgresTestSchema> CreateNamedAsync(
+        string name,
+        CancellationToken cancellationToken) =>
+        CreateAsync(tenantSchemas: false, throughVersion: null, cancellationToken, name);
+
     private static async ValueTask<PostgresTestSchema> CreateAsync(
         bool tenantSchemas,
         int? throughVersion,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? name = null)
     {
         if (!PostgresTestDatabase.IsAvailable)
         {
@@ -184,7 +210,7 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
 
         var options = new PostgresJournalOptions
         {
-            Schema = "flowx_t_" + identity,
+            Schema = name ?? "flowx_t_" + identity,
             TenantSchemas = new TenantSchemaOptions
             {
                 IsEnabled = tenantSchemas,
@@ -203,6 +229,11 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
             : null;
 
         var schema = new PostgresTestSchema(dataSource, options, stores);
+
+        if (name is not null)
+        {
+            await DropAsync(dataSource, name, cancellationToken).ConfigureAwait(false);
+        }
 
         await schema.Migrator
             .MigrateAsync(throughVersion ?? PostgresMigrator.TargetVersion, cancellationToken)
@@ -595,26 +626,41 @@ internal sealed class PostgresTestSchema : IAsyncDisposable
             await drop.ExecuteNonQueryAsync();
         }
 
-        await using (var connection = await DataSource.OpenConnectionAsync())
-        await using (var command = connection.CreateCommand())
-        {
-            // The same parameterised-identifier route the migrator uses to create it.
-            command.CommandText =
-                """
-                SELECT set_config('flowx.drop_schema', @schema, false);
-                DO $$
-                BEGIN
-                    EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', current_setting('flowx.drop_schema'));
-                END
-                $$;
-                """;
-
-            command.Parameters.AddWithValue("schema", Options.Schema);
-
-            await command.ExecuteNonQueryAsync();
-        }
+        await DropAsync(DataSource, Options.Schema, CancellationToken.None);
 
         await DataSource.DisposeAsync();
+    }
+
+    /// <summary>Drops a schema and everything in it, whether or not it is there.</summary>
+    /// <param name="dataSource">The direct connection to issue it on.</param>
+    /// <param name="name">The schema to drop.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <remarks>
+    /// The same parameterised-identifier route the migrator uses to create it: the name
+    /// reaches SQL as a value and is quoted by <c>format('%I')</c>, so a schema name is not a
+    /// place a statement can be assembled from.
+    /// </remarks>
+    private static async ValueTask DropAsync(
+        NpgsqlDataSource dataSource,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+
+        command.CommandText =
+            """
+            SELECT set_config('flowx.drop_schema', @schema, false);
+            DO $$
+            BEGIN
+                EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', current_setting('flowx.drop_schema'));
+            END
+            $$;
+            """;
+
+        command.Parameters.AddWithValue("schema", name);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }
 

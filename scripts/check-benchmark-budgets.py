@@ -116,10 +116,14 @@ def check(results: dict[str, dict], baseline: dict, strict: bool) -> tuple[list[
 
         # BLOCKING 1 — allocations. Exact, machine-independent, and B2/B6 are hard zeros.
         #
-        # Exact only for code WE wrote. A benchmark that drives Roslyn measures Roslyn's
-        # allocations too, and those move by a few hundred bytes between runs of the same
-        # commit — so an exact gate there fails on noise and teaches people to ignore it.
-        # Such entries declare allocationTolerancePercent and are checked as a band.
+        # Exact only where the figure is a property of the code. Two things break that,
+        # and both are named at the entry that declares allocationTolerancePercent:
+        # a benchmark that drives Roslyn measures Roslyn's allocations too, which move by
+        # a few hundred bytes between runs of the same commit; and an allocation the JIT
+        # can prove does not escape is charged on the machines where profile-guided
+        # inlining did not reach it and not on the ones where it did. An exact gate on
+        # either asserts something about the toolchain, fails on a machine change, and
+        # teaches people to ignore it. Such entries are checked as a band.
         tolerance = expected.get("allocationTolerancePercent")
 
         if tolerance is None:

@@ -126,6 +126,51 @@ public sealed class ProblemDetailsJsonTests
             .ShouldBe("He said \"no\", then\nnewline\\backslash");
     }
 
+    /// <summary>
+    /// Stage 3's field errors reach the wire as a validation problem's <c>errors</c> member.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/10 §3</c>'s <c>Validate</c> row is "field errors → RFC 7807", and this is where
+    /// the arrow lands. The shape — field name to an array of messages — is the one a validation
+    /// problem document already carries, so a client library that understands one understands
+    /// this. Without the writer's own case the list would fall to the default branch and reach
+    /// the caller as a type name.
+    /// </para>
+    /// <para>
+    /// Two messages under one field, because a member can break two rules and a caller
+    /// rendering the problem beside a form wants both in one place.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void WritesFieldErrorsAsTheValidationProblemsErrorsMember()
+    {
+        var problem = Sample();
+
+        problem.Extensions["errors"] = new List<FieldError>
+        {
+            new("Quantity", "range", "'Quantity' must be between 1 and 100."),
+            new("Sku", "required", "'Sku' is required."),
+            new("Sku", "length", "'Sku' must be at most 8 characters."),
+        };
+
+        using var document = Render(problem);
+
+        var errors = document.RootElement.GetProperty("errors");
+
+        errors.ValueKind.ShouldBe(
+            JsonValueKind.Object,
+            "the member is an object of field name to messages, not an array of records — " +
+            "which is the shape every validation-problem client already reads.");
+
+        errors.GetProperty("Quantity").EnumerateArray().Select(static m => m.GetString())
+            .ShouldBe(["'Quantity' must be between 1 and 100."]);
+
+        errors.GetProperty("Sku").EnumerateArray().Select(static m => m.GetString())
+            .ShouldBe(["'Sku' is required.", "'Sku' must be at most 8 characters."],
+                "two rules over one member are two messages under one key.");
+    }
+
     [Fact]
     public void ProducesTheRfc7807MediaType()
         => ProblemDetailsJson.ContentType.ShouldBe("application/problem+json",

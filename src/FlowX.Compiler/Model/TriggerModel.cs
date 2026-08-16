@@ -192,8 +192,8 @@ public sealed record StreamDeclaration(
 /// <summary>Every trigger one flow declares, keyed by the flow's business identity.</summary>
 /// <remarks>
 /// <para>
-/// Carried alongside <see cref="FlowModel"/> rather than on it, because a trigger is
-/// read from an attribute on the flow's class while everything on <see cref="FlowModel"/>
+/// Carried alongside <c>FlowModel</c> rather than on it, because a trigger is
+/// read from an attribute on the flow's class while everything on <c>FlowModel</c>
 /// is read from the <c>Define</c> chain. Keeping the two apart means the manifest can
 /// gain declared triggers without the plan emitter — which has no use for them — being
 /// touched at all.

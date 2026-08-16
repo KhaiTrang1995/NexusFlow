@@ -153,12 +153,19 @@ A vision that cannot fail is marketing. FlowX succeeds only if:
 > ([B12-scale.md](benchmarks/B12-scale.md)), and that measurement stays true of what it
 > measured.
 >
-> **V4 and V5 have no harness.** *This sentence said "there is no journal to checkpoint
+> **V4 has no harness, and V5 now has one.** *This lead read "V4 and V5 have no harness"
+> until the rig named below existed.* *This sentence said "there is no journal to checkpoint
 > into"; since WP-53 there is one, with a PostgreSQL store. What V4 lacks is the load test
 > (WP-50), not the journal.* (V4,
 > P2) and no start-up benchmark or AOT-published image to time (V5, P9); the
 > AOT job proves the binary links and serves a request, and does not measure
-> 200 ms. V1 is a review, V2 has its transports and its sample and is now measured by
+> 200 ms. *The V5 half of that expired on 2026-08-14: `tests/FlowX.ColdStart.Bench` publishes
+> the sample with the AOT job's own command and times thirty cold starts to the first served
+> flow response — **63.0 ms at p50, 102.2 ms at p99 against the 200 ms ceiling**, on a shared
+> container ([V5-cold-start.md](benchmarks/V5-cold-start.md)). What stays true is the clause
+> before it: the AOT job still does not measure 200 ms, and neither does any other job — V5 is
+> measured and ungated.* V1 is a review, V2 has its transports and its sample and is now
+> measured by
 > `TransportPortabilityTests` — *this sentence read "V2 needs a second transport (P3) and a
 > sample that is currently one `README.md`"; the sample is four flows over one billing chain,
 > and its target is stated over that chain rather than over a flow class
@@ -168,9 +175,11 @@ A vision that cannot fail is marketing. FlowX succeeds only if:
 > [22-CLI](22-CLI.md)* — and even that does not check the "policies and events"
 > half of the criterion. V8 has not been run.
 >
-> So of eight criteria: **two met and gated, one failing and gated, five not yet
-> measurable.** That is the expected shape with P0 complete and P1 in progress
-> out of ten phases, and it is worth writing down so the table is not read as a
+> So of eight criteria: **two met and gated, one failing and gated, one measured and
+> ungated, four not yet measurable.** *That third count was "five not yet measurable" until
+> V5 was measured; measured-and-ungated is its own state and collapsing it into either
+> neighbour is how a scorecard starts lying.* That is the expected shape with P0 complete
+> and P1 in progress out of ten phases, and it is worth writing down so the table is not read as a
 > scorecard.
 
 ## 8. The ten-year framing

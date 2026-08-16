@@ -31,6 +31,10 @@ namespace FlowX.Runtime;
 /// set — the schema a change was read from, a broker field a FlowX producer wrote, a
 /// schedule's declared tenant — rather than asserted by whoever is calling.
 /// </param>
+/// <param name="Purpose">
+/// What this invocation's processing is for, resolved from validated claims only, or
+/// <c>null</c> when the caller asserted none.
+/// </param>
 /// <remarks>
 /// <para>
 /// A readonly record struct, so starting a flow does not allocate an argument object. The
@@ -83,6 +87,29 @@ namespace FlowX.Runtime;
 /// Nothing a caller can reach sets it: <c>HttpTriggerReader</c> leaves it false, and
 /// <c>OnlyAPlatformTriggerAttestsATenant</c> is the gate that keeps it that way.
 /// </para>
+/// <para>
+/// <strong><see cref="Purpose"/> travels the path <see cref="TenantId"/> travelled, and is
+/// read from a claim for the same reason.</strong> It is what a declared
+/// <c>PolicySet.Consent(purpose)</c> is compared against — GDPR Article 5(1)(b)'s purpose
+/// limitation, decided at stage 2 beside the capability's stance. A purpose taken from a
+/// header, a query string or the payload would be a purpose the caller picks, and a
+/// purpose-limitation control whose input the limited party supplies limits nothing; so
+/// <c>HttpTriggerReader</c> reads a <c>purpose</c> claim and there is deliberately no
+/// configuration hook to add a second source, which is the stance <c>TenantClaimTypes</c> and
+/// <c>StepAuthorization.PermissionClaimTypes</c> both take.
+/// </para>
+/// <para>
+/// <strong>Absent means absent, and a consent-gated step refuses it.</strong> Defaulted so
+/// that every existing construction still compiles and still means what it did — a trigger
+/// that supplies no purpose produces an invocation that has asserted none, which is the
+/// truthful reading of one, and under deny-by-default that is a refusal rather than a permit.
+/// A step declaring no <c>Consent</c> never reads this field.
+/// </para>
+/// <para>
+/// Last in the parameter list, after <see cref="TenantAttested"/>, for the reason
+/// <see cref="Principal"/> was: a positional construction written before this existed still
+/// compiles and still means the same thing.
+/// </para>
 /// </remarks>
 public readonly record struct FlowInvocation(
     string CorrelationId,
@@ -91,7 +118,8 @@ public readonly record struct FlowInvocation(
     DateTimeOffset? Deadline = null,
     ClaimsPrincipal? Principal = null,
     bool IsContinuation = false,
-    bool TenantAttested = false);
+    bool TenantAttested = false,
+    string? Purpose = null);
 
 /// <summary>What happened to the compensations after a flow failed.</summary>
 public enum CompensationOutcome
@@ -546,6 +574,246 @@ public static class FlowErrors
             ErrorCategory.Unavailable)
             .With("capabilityId", capabilityId);
 
+    /// <summary>The code <see cref="QuotaExhausted"/> raises.</summary>
+    /// <remarks>
+    /// A sibling of <see cref="RateLimitedCode"/> and deliberately not the same code, because
+    /// the two lead to opposite responses. A rate limit says "slow down" and a caller obeys it
+    /// by waiting; a quota says "the plan you bought is spent for this period", and a caller
+    /// that treated it as backpressure would spend the remainder of a month retrying. The
+    /// <c>retryAfter</c> both carry is what the two have in common, and it means different
+    /// things: milliseconds there, whatever is left of the period here.
+    /// </remarks>
+    public const string QuotaExhaustedCode = "policy.quota_exhausted";
+
+    /// <summary>
+    /// A step's <c>Quota</c> has no budget left for this holder in the current period.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose budget is spent.</param>
+    /// <param name="retryAfter">What is left of the period, as the store reported it.</param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ErrorCategory.Forbidden"/> rather than <see cref="ErrorCategory.Unavailable"/>,
+    /// which is where this parts company with <see cref="RateLimited"/>. Nothing is down and
+    /// nothing is temporarily busy: the caller has spent what it is entitled to, and no amount
+    /// of waiting inside this period changes the answer. The category is also what keeps the
+    /// error out of <c>Retry</c>'s default retryable set — a forward retry of an exhausted plan
+    /// limit would spend the flow's deadline re-asking a question whose answer is fixed until
+    /// the window turns over — and what makes a transport render it as a <c>403</c> rather than
+    /// a <c>429</c>, which is the honest status for "you may not", as opposed to "not now".
+    /// </para>
+    /// <para>
+    /// <c>retryAfter</c> is carried anyway, because the one thing a refused caller can act on is
+    /// when the budget comes back, and that is a fact only the store's clock knows.
+    /// </para>
+    /// </remarks>
+    public static Error QuotaExhausted(string capabilityId, TimeSpan retryAfter) =>
+        new Error(
+            QuotaExhaustedCode,
+            $"The quota for capability '{capabilityId}' is spent for this period. It is granted " +
+            $"again in {retryAfter}. The call was refused without being made.",
+            ErrorCategory.Forbidden)
+            .With("capabilityId", capabilityId)
+            .With("retryAfter", retryAfter);
+
+    /// <summary>The code <see cref="QuotaStoreUnavailable"/> raises.</summary>
+    public const string QuotaUnavailableCode = "policy.quota_unavailable";
+
+    /// <summary>
+    /// A step declares a <c>Quota</c> and the budget could not be consulted — no store was
+    /// registered, or the one that was did not answer.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose budget could not be consulted.</param>
+    /// <param name="cause">What the store reported, when there was a store.</param>
+    /// <remarks>
+    /// A refusal, for <see cref="RateLimiterUnavailable"/>'s reason word for word: admitting
+    /// when the store is absent puts the declaration's meaning in a registration nobody can see
+    /// from the flow, and admitting when it is unreachable turns an outage of the counter into
+    /// an unmetered month.
+    /// </remarks>
+    public static Error QuotaStoreUnavailable(string capabilityId, Error? cause = null) =>
+        new Error(
+            QuotaUnavailableCode,
+            cause is null
+                ? $"Capability '{capabilityId}' declares a Quota and no IQuotaStore is " +
+                  "registered, so no budget could be consulted. The call was refused rather " +
+                  "than admitted: a budget that is not wired up must not read as a budget that " +
+                  "had room."
+                : $"Capability '{capabilityId}' declares a Quota and its store did not answer: " +
+                  $"{cause.Message} The call was refused rather than admitted — a counter that " +
+                  "cannot reach its server does not know what this holder has already spent.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId);
+
+    /// <summary>The code <see cref="ConsentPurposeAbsent"/> raises.</summary>
+    /// <remarks>
+    /// Spelled with the policy's prefix like every other policy failure, and kept distinct
+    /// from <see cref="ConsentPurposeNotCoveredCode"/> for the reason
+    /// <c>authorization.not_authenticated</c> is kept distinct from
+    /// <c>authorization.permission_denied</c> one line up the same stage: "you asserted no
+    /// purpose" and "you asserted one and it is not this one" lead to different repairs — the
+    /// first is a credential that has to start carrying a <c>purpose</c> claim, the second is
+    /// a caller doing something it was never granted. An operator reading a refusal must not
+    /// have to guess which.
+    /// </remarks>
+    public const string ConsentPurposeAbsentCode = "policy.consent_purpose_absent";
+
+    /// <summary>
+    /// A step declares a <c>Consent</c> purpose and the invocation asserted none.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose purpose went unstated.</param>
+    /// <param name="declared">The purpose the step is declared to serve.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A refusal, and this is the direction that makes the policy worth
+    /// declaring.</strong> Admitting an invocation that named no purpose would mean the gate
+    /// held for callers who had thought about it and opened for everybody else — the control
+    /// failing open on exactly the population it exists for, which is
+    /// <c>docs/15 §1</c>'s deny-by-default row and
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0030-policy-stance-is-refused-at-build-time.md">ADR-0030</a>'s
+    /// argument one stage earlier.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Forbidden"/>, which is what every stage-2 refusal carries: a
+    /// transport renders it <c>403</c>, <c>IsTerminal</c> keeps it out of every retry set, and
+    /// asking again with the same credential gets the same answer.
+    /// </para>
+    /// <para>
+    /// It names the purpose the step wants and never the one the caller sent, for
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0029-a-refusal-is-a-result-failure.md">ADR-0029</a>
+    /// §2.2's reason: the declared purpose is already public — it is in
+    /// <c>flowx.manifest.json</c> — so naming it tells the caller what to ask for, and there
+    /// is nothing of the caller's to disclose.
+    /// </para>
+    /// </remarks>
+    public static Error ConsentPurposeAbsent(string capabilityId, string declared) =>
+        new Error(
+            ConsentPurposeAbsentCode,
+            $"Capability '{capabilityId}' may be invoked only for the purpose '{declared}' " +
+            "and this invocation asserted no purpose at all. A purpose is read from a " +
+            "validated claim, never from a header or a payload — a caller that supplied its " +
+            "own would be limiting itself.",
+            ErrorCategory.Forbidden)
+            .With("capabilityId", capabilityId)
+            .With("purpose", declared);
+
+    /// <summary>The code <see cref="ConsentPurposeNotCovered"/> raises.</summary>
+    public const string ConsentPurposeNotCoveredCode = "policy.consent_purpose_not_covered";
+
+    /// <summary>
+    /// The invocation asserted a purpose and it is not the one the step is declared to serve.
+    /// </summary>
+    /// <param name="capabilityId">The capability the purpose does not cover.</param>
+    /// <param name="declared">The purpose the step is declared to serve.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Purpose limitation, and the comparison is an equality on purpose.</strong> A
+    /// consent to be treated is not a consent to be studied, and whether one purpose subsumes
+    /// another is a legal judgement rather than a fact about string prefixes — so the engine
+    /// compares ordinally and a step serving two purposes is two steps.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Forbidden"/>, and the asserted purpose is deliberately absent
+    /// from the message and from the detail. It came off the caller's credential, which makes
+    /// it the caller's claims in an RFC 7807 body — the information disclosure
+    /// <c>docs/15 §3</c>'s Boundary 1 row refuses, and what
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0029-a-refusal-is-a-result-failure.md">ADR-0029</a>
+    /// §2.2 already settled for the stance beside this one: name the grant, never the caller.
+    /// </para>
+    /// </remarks>
+    public static Error ConsentPurposeNotCovered(string capabilityId, string declared) =>
+        new Error(
+            ConsentPurposeNotCoveredCode,
+            $"Capability '{capabilityId}' may be invoked only for the purpose '{declared}' " +
+            "and this invocation was made for another one. A purpose is granted for what it " +
+            "names and does not extend to a second.",
+            ErrorCategory.Forbidden)
+            .With("capabilityId", capabilityId)
+            .With("purpose", declared);
+
+    /// <summary>The code <see cref="ValidationFailed"/> raises.</summary>
+    /// <remarks>
+    /// <c>docs/10-Policy-Framework.md</c> §3's "field errors → RFC 7807". The code is spelled
+    /// with the policy's prefix like every other policy failure, and the field errors ride in
+    /// the error's structured detail under <see cref="FieldErrorsDetail"/> — which
+    /// <c>ProblemDetailsMapper</c> already copies into the problem document's extensions, so
+    /// there is one mapping from an <see cref="Error"/> to a 7807 body and this extends it
+    /// rather than adding a second.
+    /// </remarks>
+    public const string ValidationFailedCode = "policy.validation_failed";
+
+    /// <summary>
+    /// The detail key the field errors travel under, and the member RFC 7807 renders them as.
+    /// </summary>
+    /// <remarks>
+    /// <c>errors</c>, which is the name a validation problem document carries by convention —
+    /// an object of field name to messages. Naming it anything else would mean every client
+    /// library that already understands a validation problem would have to learn a FlowX
+    /// spelling of it.
+    /// </remarks>
+    public const string FieldErrorsDetail = "errors";
+
+    /// <summary>
+    /// A step's <c>Validate</c> found the input broke rules its contract declares.
+    /// </summary>
+    /// <param name="capabilityId">The capability the input was destined for.</param>
+    /// <param name="failures">Which members broke which rules. Never empty.</param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ErrorCategory.Validation"/>, which is what makes this a <c>400</c> and keeps
+    /// it out of every retry set: <c>docs/10 §11</c>'s first anti-pattern is retrying a
+    /// validation error, because "the input will never become valid".
+    /// </para>
+    /// <para>
+    /// <strong>The message counts the failures and does not quote them.</strong> The detail is
+    /// the structured list, which is the half a caller can act on; a message that concatenated
+    /// the field messages would be a second, lossier rendering of the same facts, and the
+    /// summary is what belongs in a log line.
+    /// </para>
+    /// </remarks>
+    public static Error ValidationFailed(string capabilityId, IReadOnlyList<FieldError> failures)
+    {
+        ArgumentNullException.ThrowIfNull(failures);
+
+        return new Error(
+            ValidationFailedCode,
+            $"The input to '{capabilityId}' broke {failures.Count} rule(s) its contract " +
+            "declares. The step was refused without being dispatched — docs/10 §2: validation " +
+            "after the side effect is corrupt data written and then rejected.",
+            ErrorCategory.Validation)
+            .With("capabilityId", capabilityId)
+            .With(FieldErrorsDetail, failures);
+    }
+
+    /// <summary>The code <see cref="ValidationUnavailable"/> raises.</summary>
+    public const string ValidationUnavailableCode = "policy.validation_unavailable";
+
+    /// <summary>
+    /// A step declares a <c>Validate</c> and its dispatcher has no generated checks to run.
+    /// </summary>
+    /// <param name="capabilityId">The capability whose input went unchecked.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A refusal, and the reason is the one every stage-1 and stage-3 seam gives.</strong>
+    /// The checks are generated from the contract's annotations, so a dispatcher that answers
+    /// <see cref="ValidationOutcome.Unavailable"/> is one that was written by hand or compiled
+    /// from a source the generator did not see. Admitting there would make a declared
+    /// <c>Validate</c> mean nothing on exactly the builds where nobody would notice.
+    /// </para>
+    /// <para>
+    /// A compiled flow cannot reach it: <c>FLOWX1056</c> refuses a <c>Validate</c> on a contract
+    /// with no rule to check at build time, and the generator emits a case for every step that
+    /// passes.
+    /// </para>
+    /// </remarks>
+    public static Error ValidationUnavailable(string capabilityId) =>
+        new Error(
+            ValidationUnavailableCode,
+            $"Capability '{capabilityId}' declares a Validate and its dispatcher generated no " +
+            "checks for it, so the input was never examined. The step was refused rather than " +
+            "dispatched: a validation nothing ran must not read as a validation that passed.",
+            ErrorCategory.Internal)
+            .With("capabilityId", capabilityId);
+
     /// <summary>The code <see cref="IdempotencyStoreUnavailable"/> raises.</summary>
     public const string IdempotencyUnavailableCode = "policy.idempotency_unavailable";
 
@@ -894,6 +1162,41 @@ public static class FlowErrors
             .With("flowId", flowId)
             .With("subFlowId", subFlowId)
             .With("maxDepth", depth);
+
+    /// <summary>
+    /// A resumed instance found its step already answered for by the fallback capability, so
+    /// the primary is not asked again.
+    /// </summary>
+    /// <param name="capabilityId">The step's own capability, which finished failing elsewhere.</param>
+    /// <param name="fallbackId">The capability that owns the step now.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A failure that exists to be replaced, and usually is.</strong> The step loop
+    /// needs a non-null error to carry into <c>DegradeAsync</c> — that is what "the step has
+    /// finished failing" is spelled as — and a resumed instance no longer has the one the dead
+    /// node saw, because a journal row records an outcome and never an <see cref="Error"/>.
+    /// This says exactly what the committed history supports and nothing more. When the
+    /// fallback then answers, it is discarded; it reaches a caller only when the fallback fails
+    /// too, which is the case where naming both capabilities is precisely what an operator
+    /// needs.
+    /// </para>
+    /// <para>
+    /// <see cref="ErrorCategory.Unavailable"/> rather than <see cref="ErrorCategory.Internal"/>:
+    /// what is known is that a dependency stopped answering, which is the category the primary's
+    /// own exhaustion would almost always have carried. Guessing <c>Internal</c> would turn a
+    /// dependency's outage into this platform's defect in every trace of a resumed degradation.
+    /// </para>
+    /// </remarks>
+    public static Error StepAlreadyDegrading(string capabilityId, string fallbackId) =>
+        new Error(
+            "flow.step_already_degrading",
+            $"Capability '{capabilityId}' had already failed for the last time when this " +
+            $"instance was resumed, and its declared fallback '{fallbackId}' has a committed " +
+            "row. The step is answered by the fallback rather than by asking the primary " +
+            "again, so the attempts the author declared are not spent a second time.",
+            ErrorCategory.Unavailable)
+            .With("capabilityId", capabilityId)
+            .With("fallbackCapabilityId", fallbackId);
 
     /// <summary>The code <see cref="SignalNotReceived"/> raises.</summary>
     /// <remarks>

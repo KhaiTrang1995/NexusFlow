@@ -5,21 +5,29 @@
 > **Answers:** how does FlowX deploy, scale, roll out and degrade?
 
 > [!WARNING]
-> **This repository contains no Dockerfile, no Helm chart, no Kubernetes
-> manifest and no KEDA scaler.** The three roles in §1 are one image in the sense
-> that they would be; nothing builds that image. The Checkov IaC scan named in
+> **This repository contains no Helm chart, no Kubernetes manifest and no KEDA
+> scaler.** The three roles in §1 are one image in the sense that they would be;
+> nothing builds a role-tagged image. The Checkov IaC scan named in
 > [21 §4](21-Quality-Gates.md#4-security-testing-toolchain) has no charts to
-> scan.
+> scan. `ConfigurationCannotChangeGraph` is named here as a fitness function and
+> is not written — the *property* is real (the graph is emitted as static data at
+> build time and no configuration path reaches it) and nothing asserts it.
 >
-> The subsystems the operational behaviour depends on are also absent: there is
-> no journal, so there are no leases to release on drain and no in-flight state
-> to checkpoint; there is no telemetry, so there is no scaling signal and no
-> readiness signal beyond `FlowXHealthCheck`. `ConfigurationCannotChangeGraph` is
-> named here as a fitness function and is not written — the *property* is real
-> (the graph is emitted as static data at build time and no configuration path
-> reaches it) and nothing asserts it.
+> *This block also said there was no Dockerfile, no journal and no telemetry, and
+> that the only readiness signal was `FlowXHealthCheck`. All four stopped being
+> true as the runtime was built: `samples/crm` and `samples/crm-web` each carry a
+> Dockerfile, the PostgreSQL journal and lease store ship, leases are released
+> explicitly on drain as §2 describes, and OpenTelemetry emits the scaling signals
+> §3 scales on. The sentences are corrected rather than deleted, because a reader
+> who knew the old text needs to see which part changed.*
 >
 > Read this as the operating model P2, P5 and P9 are built towards.
+
+> [!TIP]
+> **Deploying to Azure?** This document is orchestrator-neutral on purpose.
+> [28 — Azure Hosting](28-Azure-Hosting.md) scores Functions, App Service,
+> Container Apps and AKS against what the runtime actually needs, and maps the
+> three roles below onto each of them.
 
 ---
 
@@ -31,13 +39,13 @@ trigger sources and the scaling signal differ.
 ```mermaid
 flowchart TB
     subgraph cluster["Kubernetes cluster"]
-        subgraph api["api role — FLOWX_TRIGGERS=http,grpc"]
+        subgraph api["api role — Sweeps = None"]
             A1["replica 3..30<br/>HPA: RPS + p99"]
         end
-        subgraph worker["worker role — FLOWX_TRIGGERS=kafka,stream"]
+        subgraph worker["worker role — Sweeps = Ingestion"]
             W1["replica 2..20<br/>KEDA: consumer lag"]
         end
-        subgraph sched["scheduler role — FLOWX_TRIGGERS=cron"]
+        subgraph sched["scheduler role — Sweeps = Durability"]
             S1["replica 2 (leader-elected)<br/>no autoscale"]
         end
     end
@@ -60,6 +68,15 @@ flowchart TB
 
 Splitting roles is configuration, not code. A small system may run all three in
 one deployment; the manifest is unaffected.
+
+> [!NOTE]
+> **These three labels named `FLOWX_TRIGGERS`, and no such variable ever existed.** The
+> topology was drawn before anything could express it: each sweep decided whether it
+> *could* run — a recovery scan needs a journal — and none could be told whether it
+> *should*, so a host with a journal ran every sweep it was capable of.
+> `FlowXOptions.Sweeps` is the switch that makes the split real, and
+> `HostSweepGateTests` fails the build if a new sweep is added without consulting it. It
+> defaults to every sweep, so nothing already deployed changes.
 
 ---
 
@@ -109,8 +126,12 @@ deploy".
 # api — latency-aware, not just CPU
 - type: Pods
   pods: { metric: { name: flowx_flow_duration_seconds_p99 }, target: { averageValue: "300m" } }
-- type: Pods
-  pods: { metric: { name: flowx_trigger_admitted_rate }, target: { averageValue: "200" } }
+# Request rate comes from the ingress, not from FlowX — see the note below.
+- type: Object
+  object:
+    describedObject: { kind: Ingress, name: flowx-api }
+    metric: { name: requests_per_second }
+    target: { type: Value, value: "200" }
 
 # worker — KEDA on real backlog
 triggers:
@@ -126,6 +147,22 @@ triggers:
 | Consumer lag | bus workers | lag spikes during rebalance — use stabilisation windows |
 | Pending instances | durable backlog | needs an index on `(state, created_at)` |
 | p99 latency | user-facing APIs | noisy at low traffic — require a minimum request rate |
+
+> [!CAUTION]
+> **The second `api` rule used to read `flowx_trigger_admitted_rate`, and that rule could
+> never have fired.** `flowx_trigger_admitted_total` is declared in `TelemetryNames` and
+> **nothing produces it** — [12 §3](12-Observability.md#3-metrics) says so at the row, and
+> the reason is that a `kind` label needs one admission point serving every transport while
+> there is one transport. Copying the old snippet gave you an autoscaler that silently never
+> scaled. It is replaced above by request rate from the ingress, which the ingress controller
+> does emit. *The producer arrived with **WP-140**'s admission seam and counts bus deliveries
+> and stream windows, not HTTP requests, so the `api` rule above still scales on ingress.*
+>
+> The other seven instruments all have producers, verified against their call sites:
+> `flowx_flow_duration_seconds`, `flowx_flow_total`, `flowx_step_duration_seconds`,
+> `flowx_capability_duration_seconds`, `flowx_capability_unhandled_total`,
+> `flowx_journal_commit_seconds` and `flowx_lease_lost_total`. Scale on those, on the
+> ingress, or on the `flow_instance` query above.
 
 Scale **down** slowly (300 s stabilisation) and **up** quickly (30 s). Aggressive
 scale-down on a durable worker causes lease churn: instances are repeatedly

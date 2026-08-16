@@ -395,20 +395,10 @@ public sealed class FlowStreamScan
         return report.Add(await CommitAsync(registration, state, force: false, ct).ConfigureAwait(false));
     }
 
-    /// <summary>One closed window, from its records to a disposition.</summary>
+    /// <summary>One closed window, from the declared parallelism to a settlement.</summary>
     /// <remarks>
-    /// <para>
-    /// <strong>The tenant is the records', and a window that mixes tenants is refused.</strong> A
-    /// window is one flow execution, and a flow executes as one tenant; aggregating two tenants'
-    /// records into one instance would hand one of them the other's data through a path no policy
-    /// sees. A deployment that isolates partitions the stream per tenant, or declares a
-    /// subscription per tenant — it does not aggregate across them.
-    /// </para>
-    /// <para>
-    /// <strong>A window whose flow already committed is deduplicated, not repeated.</strong>
-    /// <c>journal.instance_exists</c> is the ordinary answer after any restart, and it is what
-    /// makes the checkpoint safe to commit late.
-    /// </para>
+    /// The decision is <see cref="AdmitAsync"/>'s; what is here is the degree limit and the
+    /// translation into a report and a <c>Settled</c>, which is what the checkpoint reads.
     /// </remarks>
     private async Task<WindowOutcome> StartAsync(
         StreamRegistration registration,
@@ -421,52 +411,17 @@ public sealed class FlowStreamScan
         try
         {
             var one = StreamScanReport.Nothing with { Windows = 1 };
+            var admission = await AdmitAsync(registration, window, ct).ConfigureAwait(false);
 
-            if (TenantOf(window) is not { } tenant)
+            return admission.Disposition switch
             {
-                return new WindowOutcome(
-                    one with
-                    {
-                        Error = new Error(
-                            "stream.mixed_tenants",
-                            $"Window [{window.Start:O}, {window.End:O}) over " +
-                            $"'{registration.Subscription.Source}' holds records from more than " +
-                            "one tenant. One window is one flow execution and a flow executes as " +
-                            "one tenant, so aggregating them would hand one tenant another's " +
-                            "records. Partition the stream per tenant.",
-                            ErrorCategory.Forbidden),
-                    },
-                    Settled: false);
-            }
+                WindowDisposition.Refused => new WindowOutcome(
+                    one with { Error = admission.Error }, Settled: false),
 
-            var instanceId = registration.InstanceIdFor(window.Start, window.End);
-
-            var result = await _host
-                .RunAsync(
-                    registration.Flow.Plan,
-                    registration.Flow.Dispatcher,
-
-                    // The correlation id is the window's derived instance, because a window has no
-                    // inbound request to inherit one from and its records may have come from many
-                    // producers. The tenant is attested: it was read out of the records the source
-                    // served, which is provenance rather than a claim.
-                    new FlowInvocation(
-                        instanceId.ToString("d"),
-                        instanceId.ToString(),
-                        tenant.Value,
-                        TenantAttested: tenant.Value is not null),
-                    new StreamWindowBatch(
-                        registration.Subscription.Source, window.Start, window.End, window.Records),
-                    instanceId,
-                    ct)
-                .ConfigureAwait(false);
-
-            return DispositionFor(result) switch
-            {
-                Disposition.Deduplicated => new WindowOutcome(
+                WindowDisposition.Deduplicated => new WindowOutcome(
                     one with { Deduplicated = 1 }, Settled: true),
 
-                Disposition.Held => new WindowOutcome(one with { Held = 1 }, Settled: false),
+                WindowDisposition.Held => new WindowOutcome(one with { Held = 1 }, Settled: false),
 
                 _ => new WindowOutcome(one with { Started = 1 }, Settled: true),
             };
@@ -475,6 +430,118 @@ public sealed class FlowStreamScan
         {
             degree.Release();
         }
+    }
+
+    /// <summary>
+    /// What becomes of one closed window, decided and not checkpointed.
+    /// </summary>
+    /// <param name="registration">The subscription the window belongs to.</param>
+    /// <param name="window">The closed window and its records.</param>
+    /// <param name="ct">Cancels the flow this admission starts.</param>
+    /// <returns>The disposition, and the refusal when there is one.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>FlowBusScan.AdmitAsync</c>'s seam, for the transport whose item is a window
+    /// rather than a message.</strong> A push host is handed a batch by its platform, assigns it
+    /// with a <see cref="StreamWindowAssigner"/> of its own, and hands each closed window here;
+    /// what it then does about progress is the platform's, because a host with no lease and no
+    /// resident state has no checkpoint of ours to move.
+    /// </para>
+    /// <para>
+    /// <strong>No parallelism limit and no settle.</strong> <see cref="StartAsync"/> holds the
+    /// declared degree around this call and <see cref="CommitAsync"/> moves the checkpoint after
+    /// it, and neither is a decision about the window.
+    /// </para>
+    /// <para>
+    /// <strong>The tenant is the records', and a window that mixes tenants is refused.</strong> A
+    /// window is one flow execution, and a flow executes as one tenant; aggregating two tenants'
+    /// records into one instance would hand one of them the other's data through a path no policy
+    /// sees. A deployment that isolates partitions the stream per tenant, or declares a
+    /// subscription per tenant — it does not aggregate across them.
+    /// </para>
+    /// <para>
+    /// <strong>A window whose flow already committed is deduplicated, not repeated.</strong>
+    /// <c>journal.instance_exists</c> is the ordinary answer after any restart, and it is what
+    /// makes the checkpoint safe to commit late.
+    /// </para>
+    /// <para>
+    /// <strong>Over <c>FlowXOptions.MaxInFlightAdmissions</c> this is
+    /// <see cref="WindowAdmission.Held"/>, and that member is the honest one.</strong> Held means
+    /// nothing recorded the window, which is exactly true of a shed, and
+    /// <see cref="StartAsync"/> maps it to <c>Settled: false</c> — so the checkpoint does not
+    /// move past a window whose records were never aggregated, and the window is offered again on
+    /// a later pass. <see cref="WindowDisposition.Refused"/> would be the lie: that member says
+    /// the window can <em>never</em> run, and a push host obeying it would drop a window whose
+    /// only problem was that the node was busy for a moment.
+    /// </para>
+    /// </remarks>
+    public async ValueTask<WindowAdmission> AdmitAsync(
+        StreamRegistration registration, ClosedWindow window, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        ArgumentNullException.ThrowIfNull(window);
+
+        if (TenantOf(window) is not { } tenant)
+        {
+            return WindowAdmission.Refused(new Error(
+                "stream.mixed_tenants",
+                $"Window [{window.Start:O}, {window.End:O}) over " +
+                $"'{registration.Subscription.Source}' holds records from more than " +
+                "one tenant. One window is one flow execution and a flow executes as " +
+                "one tenant, so aggregating them would hand one tenant another's " +
+                "records. Partition the stream per tenant.",
+                ErrorCategory.Forbidden));
+        }
+
+        var instanceId = registration.InstanceIdFor(window.Start, window.End);
+
+        // Held for the run and released after it, as on the bus seam. A mixed-tenant window
+        // never reaches here: it can never run, so a slot spent on it would be a slot spent on
+        // refusing the same window for ever.
+        using var slot = _host.AdmissionGate.TryAcquire();
+
+        if (!slot.Admitted)
+        {
+            TriggerAdmissionCounter.Rejected(
+                TriggerKind.Stream, TriggerAdmissionCounter.ShedReason, tenant.Value);
+
+            return WindowAdmission.Held;
+        }
+
+        var result = await _host
+            .RunAsync(
+                registration.Flow.Plan,
+                registration.Flow.Dispatcher,
+
+                // The correlation id is the window's derived instance, because a window has no
+                // inbound request to inherit one from and its records may have come from many
+                // producers. The tenant is attested: it was read out of the records the source
+                // served, which is provenance rather than a claim.
+                new FlowInvocation(
+                    instanceId.ToString("d"),
+                    instanceId.ToString(),
+                    tenant.Value,
+                    TenantAttested: tenant.Value is not null),
+                new StreamWindowBatch(
+                    registration.Subscription.Source, window.Start, window.End, window.Records),
+                instanceId,
+                ct)
+            .ConfigureAwait(false);
+
+        var disposition = DispositionFor(result);
+
+        if (disposition == WindowDisposition.Held)
+        {
+            return WindowAdmission.Held;
+        }
+
+        TriggerAdmissionCounter.Admitted(
+            TriggerKind.Stream,
+            disposition == WindowDisposition.Deduplicated ? "deduplicated" : "started",
+            tenant.Value);
+
+        return new WindowAdmission(disposition, instanceId);
     }
 
     /// <summary>Commits the settled prefix, at most as often as the declaration asked for.</summary>
@@ -553,16 +620,16 @@ public sealed class FlowStreamScan
     /// flow that ran and failed as a value has happened, and only a refusal that journaled
     /// nothing holds progress.
     /// </remarks>
-    private static Disposition DispositionFor(FlowExecutionResult result)
+    private static WindowDisposition DispositionFor(FlowExecutionResult result)
     {
         if (result.IsSuccess || result.IsSuspended)
         {
-            return Disposition.Started;
+            return WindowDisposition.Started;
         }
 
         return result.Error!.Code switch
         {
-            DurabilityErrors.InstanceExistsCode => Disposition.Deduplicated,
+            DurabilityErrors.InstanceExistsCode => WindowDisposition.Deduplicated,
 
             DurabilityErrors.LeaseHeldCode
                 or DurabilityErrors.LeaseLostCode
@@ -574,9 +641,9 @@ public sealed class FlowStreamScan
                 or TenantErrors.RateLimitedCode
                 or TenantErrors.QuotaExhaustedCode
                 or TenantErrors.SaturatedCode
-                or TenantErrors.FairnessUnavailableCode => Disposition.Held,
+                or TenantErrors.FairnessUnavailableCode => WindowDisposition.Held,
 
-            _ => Disposition.Started,
+            _ => WindowDisposition.Started,
         };
     }
 
@@ -596,13 +663,6 @@ public sealed class FlowStreamScan
         }
 
         return report;
-    }
-
-    private enum Disposition
-    {
-        Started,
-        Deduplicated,
-        Held,
     }
 
     /// <summary>A tenant that may legitimately be null, distinguished from "they disagree".</summary>
@@ -632,6 +692,58 @@ public sealed class FlowStreamScan
         public Error? Stopped { get; set; }
 
         public long LastCommit { get; set; } = Stopwatch.GetTimestamp();
+    }
+}
+
+/// <summary>What became of one closed window.</summary>
+/// <remarks>
+/// <see cref="BusDisposition"/>'s three answers with the fourth replaced: a window is never
+/// dead-lettered, because there is nothing holding it to divert — the records are in the stream
+/// and the checkpoint is behind them.
+/// </remarks>
+public enum WindowDisposition
+{
+    /// <summary>The flow ran, and reached an outcome the journal holds.</summary>
+    Started,
+
+    /// <summary>A rebuild of a window whose flow already committed (ADR-0055).</summary>
+    Deduplicated,
+
+    /// <summary>Nothing recorded this window, so the checkpoint must not move past it.</summary>
+    Held,
+
+    /// <summary>
+    /// The window cannot be run at all, and <see cref="WindowAdmission.Error"/> says why.
+    /// </summary>
+    /// <remarks>
+    /// Records from more than one tenant, today. Distinguished from <see cref="Held"/> because a
+    /// held window is offered again unchanged and this one will be refused identically for ever.
+    /// </remarks>
+    Refused,
+}
+
+/// <summary>What <see cref="FlowStreamScan.AdmitAsync"/> decided about one window.</summary>
+/// <param name="Disposition">What the window is.</param>
+/// <param name="InstanceId">
+/// The instance the window names (ADR-0055), for a <see cref="WindowDisposition.Started"/> or a
+/// <see cref="WindowDisposition.Deduplicated"/>, and null otherwise.
+/// </param>
+/// <param name="Error">Why the window was refused, on <see cref="WindowDisposition.Refused"/>.</param>
+public sealed record WindowAdmission(
+    WindowDisposition Disposition, Guid? InstanceId = null, Error? Error = null)
+{
+    /// <summary>The decision for a window nothing recorded.</summary>
+    public static WindowAdmission Held { get; } = new(WindowDisposition.Held);
+
+    /// <summary>The decision for a window that can never run.</summary>
+    /// <param name="error">Why.</param>
+    /// <returns>The decision.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="error"/> is null.</exception>
+    public static WindowAdmission Refused(Error error)
+    {
+        ArgumentNullException.ThrowIfNull(error);
+
+        return new WindowAdmission(WindowDisposition.Refused, Error: error);
     }
 }
 

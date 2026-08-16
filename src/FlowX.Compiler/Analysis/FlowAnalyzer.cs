@@ -73,10 +73,27 @@ public sealed class AnalysisResult
 /// </remarks>
 public static class FlowAnalyzer
 {
-    private const string FlowAttribute = "FlowX.FlowAttribute";
-    private const string FlowDeadlineAttribute = "FlowX.FlowDeadlineAttribute";
-    private const string SensitiveAttribute = "FlowX.SensitiveAttribute";
-    private const string SubjectAttribute = "FlowX.SubjectAttribute";
+    private const string FlowXNamespace = "FlowX";
+
+    private const string FlowAttribute = "FlowAttribute";
+    private const string FlowDeadlineAttribute = "FlowDeadlineAttribute";
+    private const string SensitiveAttribute = "SensitiveAttribute";
+    private const string SubjectAttribute = "SubjectAttribute";
+
+    /// <summary>Whether an attribute is the top-level <c>FlowX</c> one with this metadata name.</summary>
+    /// <remarks>
+    /// The <c>AttributeClass?.ToDisplayString() == "FlowX.XAttribute"</c> this replaces built a
+    /// fully qualified name for every attribute on every symbol it was asked about and threw all
+    /// but the match away — and it is asked once per attribute per member of both contracts of
+    /// every flow. The <c>ContainingType</c> test is what keeps the two spellings equal: a nested
+    /// <c>FlowX.Something.FlowAttribute</c> displays as its full path and never matched either.
+    /// <c>StepBindingAnalyzer.CarriesFlowAttribute</c> already reads it this way.
+    /// </remarks>
+    private static bool IsFlowXAttribute(AttributeData attribute, string metadataName) =>
+        attribute.AttributeClass is { ContainingType: null } attributeClass
+        && attributeClass.MetadataName == metadataName
+        && attributeClass.ContainingNamespace is { Name: FlowXNamespace } containing
+        && containing.ContainingNamespace is { IsGlobalNamespace: true };
 
     /// <summary>Analyses one flow type.</summary>
     /// <param name="flowType">The class carrying <c>[Flow]</c>.</param>
@@ -95,7 +112,7 @@ public static class FlowAnalyzer
         }
 
         var flowAttribute = flowType.GetAttributes()
-            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == FlowAttribute);
+            .FirstOrDefault(a => IsFlowXAttribute(a, FlowAttribute));
 
         if (flowAttribute is null || flowAttribute.ConstructorArguments.Length == 0)
         {
@@ -117,7 +134,7 @@ public static class FlowAnalyzer
         var baseFlow = flowType.BaseType;
 
         if (baseFlow is not null && baseFlow.GetAttributes()
-                .Any(a => a.AttributeClass?.ToDisplayString() == FlowAttribute))
+                .Any(a => IsFlowXAttribute(a, FlowAttribute)))
         {
             diagnostics.Add(Diagnostic.Create(
                 FlowXDiagnostics.FlowInheritsFlow,
@@ -1071,7 +1088,7 @@ public static class FlowAnalyzer
         }
 
         var flowAttribute = target.GetAttributes()
-            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == FlowAttribute);
+            .FirstOrDefault(a => IsFlowXAttribute(a, FlowAttribute));
 
         // FLOWX1026 — a flow class with no [Flow] has no generated plan, so there is
         // nothing to compose and nothing the emitter could name.
@@ -1503,9 +1520,19 @@ public static class FlowAnalyzer
             info.AuthorizationValue,
             info.InputTypeName,
             info.OutputTypeName,
+
+            // Read off the capability's declared input rather than off the mapping's result
+            // type, and the two are the same question: FLOWX1029 already requires the mapping
+            // to produce something assignable to this, so the annotations on this contract are
+            // the ones the capability will be handed. Reading the mapping's type instead would
+            // make a step's rules depend on which .Step overload the author picked.
+            ValidationRuleReader.Read(CapabilityReader.InputContract(symbol)),
             mapping?.Text,
             mapping?.TypeName,
-            mapping?.Location);
+            mapping?.Location,
+            info.ApprovedBy,
+            info.Deprecated,
+            info.DeclarationLocation);
     }
 
     /// <summary>
@@ -1695,7 +1722,12 @@ public static class FlowAnalyzer
             // argument does not compile, so the null branch is reachable only from a
             // half-typed buffer where C# is already saying something more useful.
             arguments.Count == 0 ? null : arguments[0].Expression.ToString(),
-            arguments.Count == 0 ? null : FormatLocation(arguments[0].Expression.GetLocation())));
+            arguments.Count == 0 ? null : FormatLocation(arguments[0].Expression.GetLocation()),
+
+            // The contract's own declaration, read once. It reaches the manifest's
+            // event.schemaVersion and the outbox row's schema_version from this single
+            // value, so the document and the wire cannot disagree (ADR-0017 F2).
+            EventSchemaReader.DeclaredOn(symbol)));
     }
 
     /// <summary>
@@ -1774,7 +1806,7 @@ public static class FlowAnalyzer
 
             // And the same duration again, folded, for the manifest. See ADR-0021 §2.2 for
             // why one declaration reaches two artifacts in two forms.
-            FoldDeclaredWait(declared, semanticModel),
+            FoldDeclaredWait(declared, semanticModel, diagnostics),
 
             block));
 
@@ -1837,7 +1869,7 @@ public static class FlowAnalyzer
         var interval = Argument(arguments, "interval", 1);
         var timeout = Argument(arguments, "timeout", 2);
 
-        var budget = FoldDeclaredWait(timeout, semanticModel);
+        var budget = FoldDeclaredWait(timeout, semanticModel, diagnostics);
 
         // FLOWX1043 — the second attempt falls due after the budget has gone, so the loop is
         // one call and an escalation. Silent whenever either duration is one this compiler
@@ -1974,14 +2006,40 @@ public static class FlowAnalyzer
     /// expression gets. One hop covers the form authors write; two would buy an edge case at
     /// the cost of a loop with a termination argument to make.
     /// </para>
+    /// <para>
+    /// <strong><c>FLOWX1054</c> is raised from this method's own answer, and that is the point
+    /// of it being one method.</strong> The rule reports exactly when the fold is about to
+    /// come back empty, so the diagnostic and the published <c>timeout</c> read the same
+    /// decision once: there is no second implementation of foldability that could report a
+    /// wait the manifest carried anyway, or stay quiet about one it dropped. Silent when
+    /// nothing was declared — a call with no argument does not compile, so that branch is a
+    /// half-typed buffer where C# is already saying something more useful.
+    /// </para>
     /// </remarks>
-    private static string? FoldDeclaredWait(ExpressionSyntax? declared, SemanticModel semanticModel)
+    private static string? FoldDeclaredWait(
+        ExpressionSyntax? declared, SemanticModel semanticModel, List<Diagnostic> diagnostics)
     {
         if (declared is null)
         {
             return null;
         }
 
+        var folded = Fold(declared, semanticModel);
+
+        if (folded is null)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.DeclaredWaitCannotBeFolded,
+                declared.GetLocation(),
+                declared.ToString()));
+        }
+
+        return folded;
+    }
+
+    /// <summary>The fold itself, with no opinion about what to say when it fails.</summary>
+    private static string? Fold(ExpressionSyntax declared, SemanticModel semanticModel)
+    {
         if (DeclaredDuration.Fold(declared.ToString()) is { } folded)
         {
             return folded;
@@ -2078,7 +2136,10 @@ public static class FlowAnalyzer
             info.AuthorizationMode,
             info.AuthorizationValue,
             info.InputTypeName,
-            info.OutputTypeName));
+            info.OutputTypeName,
+            approvedBy: info.ApprovedBy,
+            deprecated: info.Deprecated,
+            capabilitySource: info.DeclarationLocation));
 
         // The policy may already be on the step: `.WithPolicy(...).CompensateWith<T>()` is
         // as legal as the order the samples use, because both calls return IStepBuilder.
@@ -2148,7 +2209,8 @@ public static class FlowAnalyzer
         }
 
         var argument = link.Invocation.ArgumentList.Arguments[0];
-        var kinds = PolicySetReader.Read(argument.Expression, semanticModel);
+        var contents = PolicySetReader.Resolve(argument.Expression, semanticModel);
+        var kinds = contents.Kinds;
 
         // The expression, not the whole argument, as everywhere else in this file. The
         // difference used to be invisible because nothing read the text back; the emitter now
@@ -2157,9 +2219,212 @@ public static class FlowAnalyzer
         var last = steps.Count - 1;
         var step = steps[last].WithPolicy(argument.Expression.ToString(), kinds.ToArray());
 
+        // Before the two rules below, because both of them now ask about it: FLOWX1052
+        // compares the fallback's output contract against the step's, and FLOWX1053 asks
+        // whether the capability that would answer changes anything.
+        if (ResolveFallbackCapability(step, contents, semanticModel) is { } fallback)
+        {
+            step = step.WithFallbackCapability(fallback);
+        }
+
         ReportPolicyConflicts(step, link, diagnostics);
+        ReportFallbackShape(step, contents, link, semanticModel, diagnostics);
 
         steps[last] = step;
+    }
+
+    /// <summary>
+    /// Resolves the capability a declared <c>Fallback&lt;TCapability&gt;()</c> names.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The same reading <c>.CompensateWith&lt;T&gt;()</c> gets, from a different
+    /// tree.</strong> A policy set is nearly always declared in a <c>Policies</c> class of its
+    /// own, so the type argument is bound against that file's model rather than the flow's —
+    /// the workaround <see cref="ReportFallbackShape"/> already makes, for the same reason and
+    /// with the same licence: this runs in the generator, which holds the compilation.
+    /// </para>
+    /// <para>
+    /// Silent wherever the compiler cannot see the declaration. A set from a referenced
+    /// assembly has no initialiser (FLOWX1036 reports the set itself) and a type that does not
+    /// bind is the C# compiler's own error; inventing a capability from either would put a
+    /// dependency in the manifest that no build can invoke.
+    /// </para>
+    /// </remarks>
+    private static StepModel? ResolveFallbackCapability(
+        StepModel step, PolicySetContents contents, SemanticModel semanticModel)
+    {
+        if (contents.Initialiser is not { } initialiser || !step.PolicyKinds.Contains(FallbackKind))
+        {
+            return null;
+        }
+
+        foreach (var policy in FlowChainWalker.Walk(initialiser))
+        {
+            if (policy.MethodName != FallbackKind || policy.TypeArguments.Count == 0)
+            {
+                continue;
+            }
+
+            var tree = initialiser.SyntaxTree;
+            var model = tree == semanticModel.SyntaxTree
+                ? semanticModel
+                : semanticModel.Compilation.GetSemanticModel(tree);
+
+            if (CapabilityReader.Read(ResolveType(policy.TypeArguments[0], model)) is not { } info)
+            {
+                return null;
+            }
+
+            // The *step's* index, because that is the only index the fallback has: it is
+            // reached through ExecuteFallbackAsync(stepIndex), never through the step switch.
+            return StepModel.Capability(
+                step.Index,
+                info.TypeName,
+                info.Id,
+                info.Version,
+                info.IsIdempotent,
+                info.SideEffects,
+                FormatLocation(policy.CallLocation),
+                info.AuthorizationMode,
+                info.AuthorizationValue,
+                info.InputTypeName,
+                info.OutputTypeName,
+                approvedBy: info.ApprovedBy,
+                deprecated: info.Deprecated,
+                capabilitySource: info.DeclarationLocation);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// FLOWX1052 — the fallback constant's type against the step's output contract.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one policy rule that reads an argument's <em>type</em>, so it is the one
+    /// that has to bind another tree.</strong> A set is nearly always declared in a
+    /// <c>Policies</c> class of its own, and a <see cref="SemanticModel"/> belongs to one tree.
+    /// FLOWX1035 works around exactly this by reading a literal out of syntax and accepting a
+    /// false negative for anything else — which is the right trade for an attempt count and the
+    /// wrong one here, because the whole finding is what type the expression has and no
+    /// spelling of it is a literal.
+    /// </para>
+    /// <para>
+    /// It is affordable here and not there: this runs in the generator, which holds the
+    /// compilation, while FLOWX1035 lives in a <c>DiagnosticAnalyzer</c>, which RS1030 forbids
+    /// from asking for a second model. <c>ErrorCatalogueReader</c> already binds other trees on
+    /// the same path and for the same reason.
+    /// </para>
+    /// <para>
+    /// Silent wherever the compiler cannot see the constant: a set from a referenced assembly
+    /// has no initialiser (FLOWX1036 reports the set itself), an expression that does not bind
+    /// is the C# compiler's own error, and a step whose capability the reader could not resolve
+    /// has no output contract to compare against. A diagnostic raised on a guess names a type
+    /// the author cannot find.
+    /// </para>
+    /// </remarks>
+    private static void ReportFallbackShape(
+        StepModel step,
+        PolicySetContents contents,
+        ChainLink link,
+        SemanticModel semanticModel,
+        List<Diagnostic> diagnostics)
+    {
+        if (step.CapabilityId is null ||
+            step.CapabilityOutput is not { Length: > 0 } output ||
+            contents.Initialiser is not { } initialiser ||
+            !step.PolicyKinds.Contains(FallbackKind))
+        {
+            return;
+        }
+
+        // The capability half is answered from a declaration rather than from an argument's
+        // type, so it needs none of the tree-binding below and returns before reaching it.
+        if (step.FallbackCapability is not null)
+        {
+            ReportFallbackCapabilityShape(step, output, link, diagnostics);
+
+            return;
+        }
+
+        foreach (var policy in FlowChainWalker.Walk(initialiser))
+        {
+            if (policy.MethodName != FallbackKind ||
+                policy.Invocation.ArgumentList.Arguments.Count == 0)
+            {
+                continue;
+            }
+
+            var tree = initialiser.SyntaxTree;
+            var model = tree == semanticModel.SyntaxTree
+                ? semanticModel
+                : semanticModel.Compilation.GetSemanticModel(tree);
+
+            // The converted type, not the declared one: `.Fallback(value)` infers TValue from
+            // the argument, so what the state bag is keyed by is what the expression converts
+            // to at the call — which is also what a target-typed `new()` resolves through.
+            var declared = model.GetTypeInfo(policy.Invocation.ArgumentList.Arguments[0].Expression)
+                .ConvertedType;
+
+            if (declared is null || declared.TypeKind == TypeKind.Error)
+            {
+                return;
+            }
+
+            var name = declared.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                .Replace("global::", string.Empty);
+
+            if (name == output)
+            {
+                return;
+            }
+
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.FallbackMustMatchTheStepsOutput,
+                link.CallLocation,
+                step.CapabilityId,
+                output,
+                name));
+
+            return;
+        }
+    }
+
+    /// <summary>
+    /// FLOWX1052 over a fallback <em>capability</em>: what it produces against what the step does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same rule and the same code as the constant's, because the finding, the message and
+    /// the author's repair are identical — a degraded answer is filed in the state bag under
+    /// its own type, so anything but the step's output is a mode no later step binds and the
+    /// first <c>ctx.Get&lt;T&gt;</c> after the outage throws. Only where the type is read from
+    /// differs: the constant's is the converted type of an expression, and this is a contract
+    /// the capability declared, which <c>CapabilityReader</c> has already resolved.
+    /// </para>
+    /// <para>
+    /// Silent for a fallback whose output could not be read, for the reason the constant rule
+    /// is silent on an unbound expression: a diagnostic raised on a guess names a type the
+    /// author cannot find.
+    /// </para>
+    /// </remarks>
+    private static void ReportFallbackCapabilityShape(
+        StepModel step, string output, ChainLink link, List<Diagnostic> diagnostics)
+    {
+        if (step.FallbackCapability?.CapabilityOutput is not { Length: > 0 } produced ||
+            produced == output)
+        {
+            return;
+        }
+
+        diagnostics.Add(Diagnostic.Create(
+            FlowXDiagnostics.FallbackMustMatchTheStepsOutput,
+            link.CallLocation,
+            step.CapabilityId,
+            output,
+            produced));
     }
 
     /// <summary>
@@ -2193,6 +2458,33 @@ public static class FlowAnalyzer
 
         ReportCompensationPolicyConflicts(step, link, diagnostics);
 
+        // FLOWX1051 — hedging a non-idempotent operation duplicates its effect while the first
+        // copy is still running. FLOWX1014's question asked of a concurrent repeat rather than
+        // a sequential one, and judged by the step's own declaration for the same reason: the
+        // capability that would run twice is the one that has to be safe to run twice.
+        if (!step.IsIdempotent && step.PolicyKinds.Contains(HedgeKind))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.HedgeRequiresIdempotency,
+                link.CallLocation,
+                step.CapabilityId));
+        }
+
+        // FLOWX1056 — a Validate whose contract declares nothing to check. Judged from the
+        // rules this compiler read off the input contract rather than from the presence of an
+        // attribute, so what is reported is exactly what would have been emitted: nothing. The
+        // step's own model carries them, read in the pass that built the manifest, so there is
+        // one reading of the contract and not two.
+        if (step.ValidationRules.Length == 0 && step.PolicyKinds.Contains(ValidateKind))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.ValidateHasNothingToCheck,
+                link.CallLocation,
+                step.PolicySetName ?? ValidateKind,
+                step.CapabilityId,
+                step.CapabilityInput ?? "object"));
+        }
+
         // FLOWX1018 — a cache hit returns a success without performing the effect.
         if (step.SideEffects.Length > 0 && step.PolicyKinds.Contains(CacheKind))
         {
@@ -2200,6 +2492,35 @@ public static class FlowAnalyzer
                 FlowXDiagnostics.CacheRequiresNoSideEffects,
                 link.CallLocation,
                 step.CapabilityId));
+        }
+
+        // FLOWX1053 — and a fallback returns a success without performing it either, which is
+        // the same sentence with the store taken out of it.
+        if (step.SideEffects.Length > 0 && step.PolicyKinds.Contains(FallbackKind))
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.FallbackRequiresNoSideEffects,
+                link.CallLocation,
+                step.CapabilityId,
+                string.Join(", ", step.SideEffects)));
+        }
+
+        // FLOWX1053 again, over the second capability. The rule above is about the step: a
+        // degraded success stands in for an effect the step was supposed to make and did not.
+        // This one is about the answer: a fallback runs *because* a dependency has just failed,
+        // so it is the least-exercised path in the system running at the worst moment, and an
+        // effect made there sits under a step whose own capability produced none — nothing on
+        // the unwind stack points at it, because ADR-0078 §2.7 keeps a degraded step off that
+        // stack and keeping it on would mean undoing the step's capability for work the
+        // fallback did. Two rules, one code: the author's repair is the same either way, and
+        // the message names which capability is at fault.
+        if (step.FallbackCapability is { SideEffects.Length: > 0 } fallback)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                FlowXDiagnostics.FallbackRequiresNoSideEffects,
+                link.CallLocation,
+                fallback.CapabilityId,
+                string.Join(", ", fallback.SideEffects)));
         }
     }
 
@@ -2285,6 +2606,22 @@ public static class FlowAnalyzer
 
     /// <summary>The policy kind whose precondition is an absence of side effects — FLOWX1018.</summary>
     private const string CacheKind = "Cache";
+
+    /// <summary>The policy kind that dispatches twice at once — FLOWX1051.</summary>
+    private const string HedgeKind = "Hedge";
+
+    /// <summary>
+    /// The policy kind that answers for the step without it — FLOWX1052 and FLOWX1053.
+    /// </summary>
+    /// <remarks>
+    /// Two rules over one kind, asking different questions of different things: whether the
+    /// declared constant is the type the step produces, and whether the capability it stands in
+    /// for was supposed to change anything. Neither implies the other, and a set can fail both.
+    /// </remarks>
+    private const string FallbackKind = "Fallback";
+
+    /// <summary>The policy kind whose rules live on the contract rather than in the call — FLOWX1056.</summary>
+    private const string ValidateKind = "Validate";
 
     private static ArrowExpressionClauseSyntax? FindArrow(MethodDeclarationSyntax method) =>
         method.ExpressionBody;
@@ -2446,7 +2783,7 @@ public static class FlowAnalyzer
             }
 
             var onMember = member.GetAttributes()
-                .Any(a => a.AttributeClass?.ToDisplayString() == attribute);
+                .Any(a => IsFlowXAttribute(a, attribute));
 
             var onParameter = contract
                 .GetMembers(".ctor")
@@ -2455,7 +2792,7 @@ public static class FlowAnalyzer
                 .Any(parameter =>
                     string.Equals(parameter.Name, member.Name, System.StringComparison.OrdinalIgnoreCase) &&
                     parameter.GetAttributes()
-                        .Any(a => a.AttributeClass?.ToDisplayString() == attribute));
+                        .Any(a => IsFlowXAttribute(a, attribute)));
 
             if (!onMember && !onParameter)
             {
@@ -2523,7 +2860,7 @@ public static class FlowAnalyzer
             }
 
             var onMember = member.GetAttributes()
-                .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute);
+                .Any(a => IsFlowXAttribute(a, SensitiveAttribute));
 
             var onParameter = contract
                 .GetMembers(".ctor")
@@ -2532,7 +2869,7 @@ public static class FlowAnalyzer
                 .Any(parameter =>
                     string.Equals(parameter.Name, member.Name, System.StringComparison.OrdinalIgnoreCase) &&
                     parameter.GetAttributes()
-                        .Any(a => a.AttributeClass?.ToDisplayString() == SensitiveAttribute));
+                        .Any(a => IsFlowXAttribute(a, SensitiveAttribute)));
 
             if ((onMember || onParameter) && !names.Contains(member.Name))
             {
@@ -2600,7 +2937,7 @@ public static class FlowAnalyzer
     private static string? ReadDeadline(INamedTypeSymbol flowType)
     {
         var attribute = flowType.GetAttributes()
-            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == FlowDeadlineAttribute);
+            .FirstOrDefault(a => IsFlowXAttribute(a, FlowDeadlineAttribute));
 
         return attribute is null || attribute.ConstructorArguments.Length == 0
             ? null
@@ -2643,7 +2980,14 @@ public static class FlowAnalyzer
         return identity.Contains(".") ? identity : "event." + identity;
     }
 
-    private static string? FormatLocation(Location location)
+    /// <summary><c>file:line</c> of a source location, or <c>null</c> when it has none.</summary>
+    /// <remarks>
+    /// Internal rather than private so <c>CapabilityReader</c> can spell a capability's
+    /// declaration the same way this spells a call site. A second formatter would be a
+    /// second notion of what a <c>sourceRef</c> looks like, in a document whose consumers
+    /// parse the string.
+    /// </remarks>
+    internal static string? FormatLocation(Location? location)
     {
         if (location is null || !location.IsInSource)
         {

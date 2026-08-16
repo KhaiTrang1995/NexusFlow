@@ -205,11 +205,58 @@ public sealed record StepModel
     /// </remarks>
     public string? AuthorizationValue { get; private init; }
 
+    /// <summary>
+    /// The reviewer named by <c>[ApprovedBy]</c>. Reaches the manifest as
+    /// <c>authorization.approvedBy</c>.
+    /// </summary>
+    /// <remarks>
+    /// Beside <see cref="AuthorizationMode"/> for the reason the value is: the schema
+    /// requires it when the mode is <c>Public</c>, so the two are read together or the
+    /// document says a capability is open to everyone and does not say who agreed to that.
+    /// </remarks>
+    public string? ApprovedBy { get; private init; }
+
+    /// <summary>
+    /// The obsoletion notice from <c>[Obsolete("...")]</c>. Reaches the manifest as
+    /// <c>capability.deprecated</c> and is what <c>FLOWX-DIFF-204</c> compares.
+    /// </summary>
+    public string? Deprecated { get; private init; }
+
+    /// <summary>
+    /// <c>file:line</c> of the capability type's declaration. Reaches the manifest as
+    /// <c>capability.source</c>.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="Location"/>, which is where this step invokes it. One
+    /// capability entry is reached from every step that calls it and names one declaration,
+    /// so the two cannot be the same field.
+    /// </remarks>
+    public string? CapabilitySource { get; private init; }
+
     /// <summary>The capability's input contract, fully qualified. Required by the manifest schema.</summary>
     public string? CapabilityInput { get; private init; }
 
     /// <summary>The capability's output contract, fully qualified.</summary>
     public string? CapabilityOutput { get; private init; }
+
+    /// <summary>
+    /// The rules the capability's input contract declares, in declaration order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Read whether or not the step declares a <c>Validate</c>, because two readers need it and
+    /// only one of them knows about the policy: <c>FlowEmitter</c> emits the checks for a step
+    /// that declared one, and <c>FLOWX1056</c> reports a step that declared one over a contract
+    /// with nothing to check. Reading it conditionally would make the rule depend on the order
+    /// the model was assembled in.
+    /// </para>
+    /// <para>
+    /// Empty is the ordinary case and costs nothing: it is the same shared empty array every
+    /// other unset collection on this model carries.
+    /// </para>
+    /// </remarks>
+    public ValidationRuleModel[] ValidationRules { get; private init; } =
+        System.Array.Empty<ValidationRuleModel>();
 
     /// <summary>
     /// Source text of the <c>.Step&lt;TCapability, TStepIn&gt;(map)</c> mapping, copied
@@ -264,6 +311,38 @@ public sealed record StepModel
     /// </remarks>
     public StepModel? Compensation { get; private init; }
 
+    /// <summary>
+    /// The capability a declared <c>Fallback&lt;TCapability&gt;()</c> names, or <c>null</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A whole <see cref="StepModel"/>, for <see cref="Compensation"/>'s reason and with the
+    /// same consequence: the fallback reaches the manifest's capability inventory carrying its
+    /// own version, side effects, authorisation stance and error catalogue, rather than as a
+    /// name on the step that may call it. A dependency a build can invoke and the manifest does
+    /// not list is a dependency <c>flowx diff</c> and the impact analysis cannot see, which is
+    /// the fourth of the four things
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>
+    /// §3 named as missing.
+    /// </para>
+    /// <para>
+    /// It is <em>not</em> a step: it has no index in the graph, no <c>case</c> in the step
+    /// switch and no place in the layout. The generated dispatcher reaches it through
+    /// <c>ExecuteFallbackAsync</c> under the index of the step it answers for, which is why the
+    /// index copied into this model is that step's.
+    /// </para>
+    /// </remarks>
+    public StepModel? FallbackCapability { get; private init; }
+
+    /// <summary>Business identity of the fallback capability.</summary>
+    public string? FallbackId => FallbackCapability?.CapabilityId;
+
+    /// <summary>Contract version of the fallback capability.</summary>
+    public string? FallbackVersion => FallbackCapability?.CapabilityVersion;
+
+    /// <summary>True when the step's degraded answer takes a dispatch rather than a constant.</summary>
+    public bool HasFallbackCapability => FallbackCapability != null;
+
     /// <summary>Fully-qualified compensation type, or <c>null</c>.</summary>
     public string? CompensationTypeName => Compensation?.CapabilityTypeName;
 
@@ -310,6 +389,19 @@ public sealed record StepModel
     /// facts and the manifest publishes only the first.
     /// </remarks>
     public string? EventContractTypeName { get; private init; }
+
+    /// <summary>
+    /// The version <c>[EventSchema("…")]</c> declares on the contract, or <c>null</c> when it
+    /// declares none.
+    /// </summary>
+    /// <remarks>
+    /// Null rather than <c>1.0.0</c>, so the two writers can tell "the author chose this
+    /// version" from "the author chose nothing" — and so the default lives at
+    /// <c>EventSchemaReader.Default</c> rather than in each of them. Both the manifest's
+    /// <c>event.schemaVersion</c> and the outbox row's <c>schema_version</c> resolve it the
+    /// same way, which is the whole of ADR-0017 F2's one-reading requirement.
+    /// </remarks>
+    public string? EventSchemaVersion { get; private init; }
 
     /// <summary>
     /// Source text of the <c>.Emit(...)</c> factory, copied verbatim, or <c>null</c> for
@@ -787,12 +879,18 @@ public sealed record StepModel
     /// </param>
     /// <param name="capabilityInput">The capability's input contract, fully qualified.</param>
     /// <param name="capabilityOutput">The capability's output contract, fully qualified.</param>
+    /// <param name="validationRules">
+    /// What the input contract's annotations declare, or <c>null</c> when it declares nothing.
+    /// </param>
     /// <param name="stepInputMap">
     /// The mapping's source text for <c>.Step&lt;TCapability, TStepIn&gt;(map)</c>, copied
     /// verbatim, or <c>null</c> for the one-type-argument overload that binds from the bag.
     /// </param>
     /// <param name="stepInputTypeName">Fully-qualified type the mapping produces.</param>
     /// <param name="stepInputMapLocation"><c>file:line</c> of the mapping expression.</param>
+    /// <param name="approvedBy">The reviewer named by <c>[ApprovedBy]</c>, or <c>null</c>.</param>
+    /// <param name="deprecated">The notice on <c>[Obsolete("...")]</c>, or <c>null</c>.</param>
+    /// <param name="capabilitySource"><c>file:line</c> of the capability's declaration.</param>
     /// <remarks>
     /// One factory for both overloads rather than two, because they produce the same
     /// <em>kind</em> of step: the capability, the descriptor, the compensation and the
@@ -812,12 +910,19 @@ public sealed record StepModel
         string? authorizationValue = null,
         string? capabilityInput = null,
         string? capabilityOutput = null,
+        ValidationRuleModel[]? validationRules = null,
         string? stepInputMap = null,
         string? stepInputTypeName = null,
-        string? stepInputMapLocation = null)
+        string? stepInputMapLocation = null,
+        string? approvedBy = null,
+        string? deprecated = null,
+        string? capabilitySource = null)
     {
         return new StepModel(index, StepKindModel.Capability)
         {
+            ApprovedBy = approvedBy,
+            Deprecated = deprecated,
+            CapabilitySource = capabilitySource,
             CapabilityTypeName = capabilityTypeName,
             CapabilityId = capabilityId,
             CapabilityVersion = capabilityVersion,
@@ -828,6 +933,7 @@ public sealed record StepModel
             AuthorizationValue = authorizationValue,
             CapabilityInput = capabilityInput,
             CapabilityOutput = capabilityOutput,
+            ValidationRules = validationRules ?? System.Array.Empty<ValidationRuleModel>(),
             StepInputMap = stepInputMap,
             StepInputTypeName = stepInputTypeName,
             StepInputMapLocation = stepInputMapLocation,
@@ -841,18 +947,24 @@ public sealed record StepModel
     /// <param name="contractTypeName">Fully-qualified <c>TEvent</c>, or <c>null</c> when unresolved.</param>
     /// <param name="factory">The factory expression's source text, copied verbatim.</param>
     /// <param name="factoryLocation"><c>file:line</c> of the factory expression.</param>
+    /// <param name="schemaVersion">
+    /// The version <c>[EventSchema("…")]</c> declares on the contract, or <c>null</c> for the
+    /// undeclared case — which both writers resolve to <c>EventSchemaReader.Default</c>.
+    /// </param>
     public static StepModel Emit(
         int index,
         string eventType,
         string? location = null,
         string? contractTypeName = null,
         string? factory = null,
-        string? factoryLocation = null)
+        string? factoryLocation = null,
+        string? schemaVersion = null)
     {
         return new StepModel(index, StepKindModel.Emit)
         {
             EventType = eventType,
             EventContractTypeName = contractTypeName,
+            EventSchemaVersion = schemaVersion,
             EventFactory = factory,
             EventFactoryLocation = factoryLocation,
             Location = location,
@@ -1424,6 +1536,16 @@ public sealed record StepModel
     public StepModel WithCompensation(StepModel compensation) => this with
     {
         Compensation = compensation,
+    };
+
+    /// <summary>Returns a copy carrying the capability its fallback would ask.</summary>
+    /// <param name="fallback">
+    /// The fallback capability, modelled exactly as a step is — build it with
+    /// <see cref="Capability"/> so it reaches the manifest with its full metadata.
+    /// </param>
+    public StepModel WithFallbackCapability(StepModel fallback) => this with
+    {
+        FallbackCapability = fallback,
     };
 
     /// <summary>Returns a copy carrying a named policy set.</summary>

@@ -68,6 +68,48 @@ public interface IStepDispatcher
     ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct);
 
     /// <summary>
+    /// Runs the capability a declared <c>Fallback&lt;TCapability&gt;()</c> names for the step
+    /// at <paramref name="stepIndex"/>, and files its answer under the step's output contract.
+    /// </summary>
+    /// <param name="stepIndex">
+    /// Position in the plan's step graph — the <em>step's</em> index, not an index of its own.
+    /// The engine calls this only after that step has failed for the last time and only when
+    /// its resolved policy carries a capability fallback, so an implementation is free to
+    /// treat any other index as a defect.
+    /// </param>
+    /// <param name="ctx">The scope the step ran under — an iteration's, inside a loop.</param>
+    /// <param name="ct">Cancellation linked to the caller's token.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A member of its own rather than a second step index, and that is the whole of
+    /// what made a capability-valued fallback unbuildable.</strong>
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0078-stage-four-nests-six-kinds.md">ADR-0078</a>
+    /// §3.1 records the wall: a fallback capability is not a step — it has no index, no place
+    /// in the graph and no <c>case</c> — and only generated code can name a
+    /// <c>JsonTypeInfo&lt;T&gt;</c> or call <c>ctx.Set&lt;T&gt;</c>, so binding its typed
+    /// output is not something the engine could ever do for itself. Giving the fallback a step
+    /// index would have been the other answer and a worse one: it would put a node in the
+    /// graph that the plan's own layout says nothing runs, and every walker over
+    /// <c>AllSteps</c> — the manifest, the impact analysis, <c>flowx diff</c> — would have to
+    /// learn to skip it. A member is the same seam <c>DescribeCacheEntry</c>,
+    /// <c>DescribeAudit</c> and <c>RestoreState</c> already use, for the identical reason.
+    /// </para>
+    /// <para>
+    /// <strong>Defaulted to a throw</strong>, for the reason <see cref="BeginSubFlow"/> gives:
+    /// a flow that declares no capability fallback can never receive this call, and requiring
+    /// it would make every hand-written dispatcher copy unreachable code. The generator emits
+    /// it explicitly, so nothing that ships depends on the default.
+    /// </para>
+    /// </remarks>
+    ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct) =>
+        throw new ArgumentOutOfRangeException(
+            nameof(stepIndex),
+            stepIndex,
+            "No step in this flow declares a capability fallback, so the engine never asks " +
+            "this dispatcher for one. Reaching this means the plan and this dispatcher came " +
+            "from different builds.");
+
+    /// <summary>
     /// Evaluates the predicate of the <see cref="StepKind.Branch"/> step at
     /// <paramref name="stepIndex"/>.
     /// </summary>
@@ -366,6 +408,49 @@ public interface IStepDispatcher
     /// </para>
     /// </remarks>
     JournalPayload DescribeInput(object? input) => JournalPayload.Empty;
+
+    /// <summary>
+    /// Checks this step's input against the rules its contract declares.
+    /// </summary>
+    /// <param name="stepIndex">Position in the plan's step graph.</param>
+    /// <param name="ctx">
+    /// The scope the step is about to run under — the iteration's view inside a <c>ForEach</c>
+    /// body, so that what is checked is what the capability will be handed.
+    /// </param>
+    /// <returns>
+    /// <see cref="ValidationOutcome.Valid"/>, the field errors, or
+    /// <see cref="ValidationOutcome.Unavailable"/> when this dispatcher has no generated checks
+    /// for the step — which the engine reads as a refusal.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Here rather than on the engine, for <see cref="DescribeCacheKey"/>'s reason and
+    /// one more.</strong> The input is a contract value in a <c>Dictionary&lt;Type, object&gt;</c>
+    /// or the result of a mapping, so only generated code can name its type — and the checks
+    /// themselves are generated too, out of the contract's <c>[Required]</c>, <c>[Range]</c>
+    /// and length annotations, read by the compiler in the same pass that builds the manifest.
+    /// An engine that validated for itself would need to reflect over the contract at run time,
+    /// which is what constraint <strong>C2</strong> and
+    /// <a href="https://github.com/votrongdao/FlowX/blob/master/docs/adr/ADR-0002-compile-time-orchestration.md">ADR-0002</a>
+    /// refuse.
+    /// </para>
+    /// <para>
+    /// <strong>Synchronous, and returning a struct.</strong> Stage 3 runs before the retry loop
+    /// on every execution of a validated step, and the answer is nearly always "fine" — an
+    /// awaitable would put a state machine, and a class would put a heap object, on a path
+    /// whose whole job is a handful of comparisons. There is nothing to await in any case: a
+    /// rule that had to call something would not be a rule the compiler could read off a
+    /// contract.
+    /// </para>
+    /// <para>
+    /// <strong>Defaulted to <see cref="ValidationOutcome.Unavailable"/> and not to
+    /// <see cref="ValidationOutcome.Valid"/>.</strong> A hand-written dispatcher that does not
+    /// implement this and whose plan declares a <c>Validate</c> gets a refused step, not an
+    /// unchecked one. The opposite default would make the policy read as satisfied on exactly
+    /// the dispatchers nothing generated — see <see cref="ValidationOutcome"/>.
+    /// </para>
+    /// </remarks>
+    ValidationOutcome Validate(int stepIndex, FlowContext ctx) => ValidationOutcome.Unavailable;
 
     /// <summary>
     /// Names what this step's result depends on, for a <c>Cache</c> key.

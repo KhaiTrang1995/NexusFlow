@@ -711,7 +711,7 @@ reader who saw the name stopped looking for the rule.
 | `CapabilitiesDoNotCallCapabilities` | §2 | an `ICapability` implementation reaches another one, from a dependency **or** a method body | `TransportIsolationTests` |
 | `EveryCapabilityDeclaresAuthorization` | P11 | a capability lacks an authorisation stance | `SecurityFitnessTests` |
 | `EveryPublicContractIsVersioned` | C7 | a flow, capability, event, manifest or shipped package carries a version that is not SemVer | `PublishedContractTests` |
-| `ManifestIsComplete` | Q3 | a declared flow or capability is missing from the manifest, or a step names one the manifest never describes | `PublishedContractTests` |
+| `ManifestIsComplete` | Q3 | a declared flow or capability is missing from the manifest, a step names one the manifest never describes, an event entry names no flow at either end or disagrees with a flow's `emits`, or a declared `.WithPolicy(...)` reaches no step's `policies` | `PublishedContractTests` |
 | `PluginsPassConformance` | Q6 | a plugin fails the shared conformance suite | **not written — see below.** A conformance project now exists; it has no trigger suite |
 | `SuppressionsAreAccountable` | §6.1 | a suppression cites no registered, unexpired `FLOWX-DEBT` id | `DebtAccountabilityTests` |
 | `DependencyLicencesAreCompatible` | C6 | a declared or resolved package has no row in the [dependency licence register](DEPENDENCIES.md), or carries a licence Apache-2.0 redistribution does not permit ([ADR-0012](adr/ADR-0012-apache-2-license.md)) | `DependencyLicenceTests` |
@@ -731,13 +731,17 @@ The one exemption is `MemberInfo.Name`: `typeof(T).Name` compiles to a call on a
 `System.Reflection` type, it is how the runtime says *which* contract a step failed to
 produce, and it discovers nothing. Everything that looks a member up is still caught.
 
-**`ManifestIsComplete` does not check policies or events, and the row above is written as
-though it checked everything.** The reason has changed since this paragraph was written and
-the paragraph did not: it used to say "no attribute applies a policy to a step, and the
-generator emits no `policies` section", and **both halves of that are now false.**
-`.WithPolicy(PolicySet)` attaches one, `FlowAnalyzer` reads the set well enough to raise
-`FLOWX1014` and `FLOWX1018` off its contents, and `ManifestWriter.WritePolicies` emits a
-`policies` array per step with each policy's fixed stage.
+~~**`ManifestIsComplete` does not check policies or events, and the row above is written as
+though it checked everything.**~~ **It checks all four of Q3's nouns as of 2026-08-15, and the
+row above now says what it checks.** This paragraph had already decayed twice — first
+claiming the generator emitted no `policies` section, then that nothing declared a policy —
+and the criterion that finally closed it
+([ADR-0017 F3](adr/ADR-0017-manifest-v1-freeze-criteria.md#f3--manifestiscomplete-covers-all-four-of-q3s-nouns))
+refused to accept a green check that could not fail. Both new halves were falsified before
+they were kept: dropping a single-policy step from `WritePolicies` fails the gate on three
+samples, and withholding `producedBy` fails it on seven events. The paragraphs below record
+what made that possible, and are left as written because they are the history of why it took
+this long.
 
 *What used to be true here was that no policy executed at all, so a completeness check over
 `policies` would pass vacuously.* **Both halves have expired.** `samples/banking` declares

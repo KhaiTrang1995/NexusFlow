@@ -1,0 +1,98 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      netstandard2.0, for FlowX.Compiler's reason and not a milder version of it: this
+      loads into the compiler process, which runs on .NET Framework inside Visual Studio
+      and on .NET Core inside `dotnet build`. A net10.0 generator silently does nothing
+      in VS.
+
+      The consequence that matters here: this project CANNOT reference
+      Microsoft.Azure.Functions.Worker, and does not want to. It emits source text that
+      names `global::Microsoft.Azure.Functions.Worker.*` attributes by string; the
+      reference those names bind against is one the CONSUMING project already declared.
+      So a Functions binding generator that takes no Functions dependency is not a trick
+      — it is the same arrangement EndpointEmitter has with ASP.NET Core.
+    -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>false</ImplicitUsings>
+
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <!-- No symbols package. FlowX.Compiler's csproj explains NU5017 at length. -->
+    <IncludeSymbols>false</IncludeSymbols>
+
+    <Description>
+      FlowX serverless bindings: the source generator that turns a flow's trigger
+      attributes into Azure Functions entry points calling the FlowX runtime.
+    </Description>
+    <PackageTags>flowx;roslyn;source-generator;azure-functions;serverless</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+
+    <!-- netstandard2.0 has no trim/AOT story and needs none: this runs in the compiler. -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned to the same Roslyn FlowX.Compiler pins, and for the same reason. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      ===================================================================================
+      THE DECISION: the trigger semantics are LINKED FROM FlowX.Compiler, not re-read.
+      ===================================================================================
+
+      WP-141's constraint is that trigger semantics come from ONE reading. There were two
+      ways to have that, and a ProjectReference is not one of them.
+
+      A Roslyn component ships as a single assembly dropped into `analyzers/dotnet/cs`.
+      Nothing puts a ProjectReference's output there beside it, so a FlowX.Functions.dll
+      that referenced FlowX.Compiler.dll would load in the compiler and throw
+      FileNotFoundException on the first call into TriggerReader — on a consumer's
+      machine, not here, because our own build has both on disk. Making it work means
+      packing FlowX.Compiler.dll into this package too, and then a project referencing
+      both packages loads two copies of the same generator and emits every plan twice.
+      Exposing the reader through a third netstandard2.0 library has the same problem one
+      assembly further out.
+
+      Linking the source compiles the same TEXT into both assemblies. There is one
+      TriggerReader.cs in the repository, one switch mapping [TriggerKind] to a name, and
+      one place a kind can be added — which is what "one reading" has to mean when the
+      two readers cannot share an assembly. It is checked, not merely intended:
+      TriggerSemanticsAreOneReadingTests asserts this project's linked set against the
+      files on disk, so a copy made here instead of a link fails the build's tests.
+
+      Only the reading is linked. The emitters are this project's own, because what a
+      Functions binding looks like is not what a manifest entry looks like.
+
+      A linked file must compile in BOTH assemblies, which is a real constraint on the
+      compiler's side and cost it two `<see cref="FlowModel"/>` in TriggerModel.cs: that
+      type is not linked here — it comes from walking Define and no entry point asks it
+      anything — so the crefs are now `<c>FlowModel</c>` and resolve in either project.
+      Linking FlowModel.cs instead would have pulled StepModel and the rest of the model
+      layer behind it, which is the opposite of taking only the reading.
+    -->
+    <Compile Include="../FlowX.Compiler/Analysis/TriggerReader.cs" Link="Linked/TriggerReader.cs" />
+    <Compile Include="../FlowX.Compiler/Model/TriggerModel.cs" Link="Linked/TriggerModel.cs" />
+    <Compile Include="../FlowX.Compiler/Emit/SourceWriter.cs" Link="Linked/SourceWriter.cs" />
+    <Compile Include="../FlowX.Compiler/Polyfills.cs" Link="Linked/Polyfills.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+</Project>

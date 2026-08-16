@@ -458,6 +458,23 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Forwarded, and substitutable under the fallback's own id. A decorator that omitted this
+    /// would inherit the interface's default — a throw — and turn a declared degraded mode into
+    /// a crash in exactly the tests written to exercise it.
+    /// </remarks>
+    public ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+    {
+        var fallback = _plan.Graph[stepIndex].StepPolicy.FallbackCapability;
+
+        _trace.RecordStep(_plan.Flow.Id, stepIndex, fallback?.Id ?? "fallback");
+
+        return fallback is not null && _substitutions.TryGetValue(fallback.Id, out var standIn)
+            ? standIn(ctx, ct)
+            : _inner.ExecuteFallbackAsync(stepIndex, ctx, ct);
+    }
+
+    /// <inheritdoc />
     public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
     {
         var compensation = _plan.Graph[stepIndex].Compensation;
@@ -522,6 +539,9 @@ internal sealed class RecordingDispatcher : IStepDispatcher
     /// a cache key that reads empty makes every cached step look uncached. PLAN §9 item 12
     /// records this costing the repository twice, both times in a harness like this one.
     /// </remarks>
+    public ValidationOutcome Validate(int stepIndex, FlowContext ctx) => _inner.Validate(stepIndex, ctx);
+
+    /// <inheritdoc cref="DescribeCacheKey" />
     public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>
         _inner.DescribeCacheKey(stepIndex, ctx);
 

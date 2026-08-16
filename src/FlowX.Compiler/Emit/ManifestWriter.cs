@@ -38,20 +38,22 @@ public static class ManifestWriter
     public const string SchemaVersion = "0.1.0";
 
     /// <summary>
-    /// The version stamped on every published event, in the manifest and on the outbox row.
+    /// The version stamped on a published event whose contract declares none.
     /// </summary>
     /// <remarks>
-    /// A constant, and named rather than repeated because it is now written in two places
-    /// that must agree: the manifest's <c>events</c> array, which is what a consumer team
-    /// reads, and <c>OutboxWrite.SchemaVersion</c>, which is what arrives beside the body. Two
-    /// literals would be a drift nobody notices until a consumer versions off the wrong one.
+    /// It stopped being the version of <em>every</em> event on 2026-08-15:
+    /// <c>[EventSchema("…")]</c> declares one on the contract type,
+    /// <see cref="Analysis.EventSchemaReader"/> reads it, and both writers that stamp a
+    /// version — this one and <c>FlowEmitter</c>'s <c>OutboxWrite</c> — take the step's
+    /// declaration and fall back here. Two literals would be the drift nobody notices until
+    /// a consumer versions off the wrong one, which is why the fallback is still one name.
     /// <para>
-    /// It is a constant rather than a declaration because nothing declares one yet — there is
-    /// no attribute on an event contract to read it from. That is ADR-0018's revisit, and
-    /// when it lands both writers change together because they read this.
+    /// An alias of <see cref="Analysis.EventSchemaReader.Default"/> rather than a second
+    /// constant: this is the name the emitter and the tests reach for, and the reader is
+    /// where the absence is decided.
     /// </para>
     /// </remarks>
-    public const string EventSchemaVersion = "1.0.0";
+    public const string EventSchemaVersion = Analysis.EventSchemaReader.Default;
 
     /// <summary>Writes the manifest for a whole application.</summary>
     /// <param name="applicationName">Usually the root assembly name.</param>
@@ -110,7 +112,7 @@ public static class ManifestWriter
         writer.OpenArray();
         foreach (var capability in CollectCapabilities(ordered))
         {
-            WriteCapability(writer, capability, errorsByCapability);
+            WriteCapability(writer, capability, errorsByCapability, projectDirectory);
         }
 
         writer.CloseArray();
@@ -121,7 +123,9 @@ public static class ManifestWriter
         {
             writer.OpenObject();
             writer.Property("type", evt);
-            writer.Property("schemaVersion", EventSchemaVersion);
+            writer.Property("schemaVersion", VersionOf(ordered, evt));
+            WriteIdentities(writer, "producedBy", Producers(ordered, evt));
+            WriteIdentities(writer, "consumedBy", Consumers(triggers, evt));
             writer.CloseObject();
         }
 
@@ -408,6 +412,17 @@ public static class ManifestWriter
         if (step.CompensationId != null)
         {
             writer.Property("compensation", step.CompensationId + "@" + step.CompensationVersion);
+        }
+
+        // Beside `compensation` because it is the same kind of fact: a second capability this
+        // step may invoke, named here and described in full in the top-level inventory. Without
+        // it the manifest would publish a build that can call a dependency it never mentions,
+        // which is the fourth of ADR-0078 §3's four missing pieces and the one every consumer
+        // of the manifest — `flowx diff`, the impact analysis, an OpenAPI generator — needs
+        // before the degraded path is a thing anyone downstream can reason about.
+        if (step.FallbackId != null)
+        {
+            writer.Property("fallback", step.FallbackId + "@" + step.FallbackVersion);
         }
 
         if (step.EventType != null)
@@ -770,12 +785,32 @@ public static class ManifestWriter
         {
             ["RateLimit"] = "Admission",
             ["Idempotency"] = "Integrity",
+
+            // WP-81 and WP-82, and neither is a new stage. A Quota shares Admission with the
+            // rate limit and a Validate shares Integrity with the idempotency window, so the
+            // manifest publishes a stage name it already published and `flowx diff` needs no
+            // new rule — the same property that made Hedge and Fallback free below.
+            ["Quota"] = "Admission",
+            ["Validate"] = "Integrity",
+
+            // WP-83, and the one entry in this table that is a new stage rather than a second
+            // kind in an old one. `Identity` has always been in the stage enum and has never
+            // had a declarable member: the authorisation stance runs there and is derived from
+            // the capability, so it appears on `capability.authorization` and not in a step's
+            // `policies`. A consent is declared, so it does.
+            ["Consent"] = "Identity",
             ["Timeout"] = "Resilience",
             ["Retry"] = "Resilience",
             ["CircuitBreaker"] = "Resilience",
             ["Bulkhead"] = "Resilience",
             ["Cache"] = "Efficiency",
             ["Audit"] = "Consistency",
+
+            // WP-78 and WP-79. Both Resilience, which is what makes them a nesting question
+            // rather than an ordering one — ADR-0078 places them, and the manifest publishes
+            // the stage it always published for stage 4, so `flowx diff` needs no new rule.
+            ["Hedge"] = "Resilience",
+            ["Fallback"] = "Resilience",
 
             // WP-57. Consistency rather than Resilience, because it wraps the step's
             // *compensation* and Consistency is where ADR-0011 puts compensation: the unwind
@@ -819,7 +854,10 @@ public static class ManifestWriter
     }
 
     private static void WriteCapability(
-        JsonWriter writer, StepModel step, Dictionary<string, CapabilityErrorCatalogue> errors)
+        JsonWriter writer,
+        StepModel step,
+        Dictionary<string, CapabilityErrorCatalogue> errors,
+        string? projectDirectory)
     {
         writer.OpenObject();
         writer.Property("id", step.CapabilityId!);
@@ -845,6 +883,13 @@ public static class ManifestWriter
             writer.Property("value", value);
         }
 
+        // The reviewer, from the same `[ApprovedBy]` PublicCapabilitiesAreReviewed reads out
+        // of source. The schema calls it "required when mode is Public", and until this line
+        // no manifest could satisfy that clause: a `Public` capability published a stance
+        // with nobody's name against it, so the document asserted that anyone may invoke the
+        // thing and left the reader to go and find out who agreed.
+        WriteOptional(writer, "approvedBy", step.ApprovedBy);
+
         writer.CloseObject();
 
         writer.Property("idempotent", step.IsIdempotent);
@@ -860,6 +905,19 @@ public static class ManifestWriter
 
         errors.TryGetValue(step.CapabilityId + "@" + step.CapabilityVersion, out var catalogue);
         WriteErrors(writer, catalogue);
+
+        // `[Obsolete("...")]`, which is how C# already spells this. FLOWX-DIFF-204 has
+        // classified a deprecation notice appearing or disappearing since before anything
+        // could write one, so this is the second half of a rule that had only one.
+        WriteOptional(writer, "deprecated", step.Deprecated);
+
+        // The capability's own declaration, not the step that calls it — one entry is
+        // reached from every step that invokes it, and the flow's `source` beside it is
+        // written from the same kind of location by the same formatter.
+        if (step.CapabilitySource != null)
+        {
+            writer.Property("source", Relativise(step.CapabilitySource, projectDirectory));
+        }
 
         writer.CloseObject();
     }
@@ -943,7 +1001,15 @@ public static class ManifestWriter
             System.StringComparer.Ordinal);
     }
 
-    /// <summary>The capabilities one step invokes: itself, and its compensation if any.</summary>
+    /// <summary>
+    /// The capabilities one step invokes: itself, its compensation and its fallback.
+    /// </summary>
+    /// <remarks>
+    /// All three are capabilities a build can call, so all three are entries. A compensation is
+    /// one that runs backwards and a fallback is one that runs instead; neither is less of a
+    /// dependency for running only on a path nobody wants to be on, and a consumer diffing two
+    /// manifests has to be able to see a breaking change to either.
+    /// </remarks>
     private static IEnumerable<StepModel> Invoked(StepModel step)
     {
         if (step.Kind == StepKindModel.Capability)
@@ -955,7 +1021,115 @@ public static class ManifestWriter
         {
             yield return step.Compensation;
         }
+
+        if (step.FallbackCapability is not null)
+        {
+            yield return step.FallbackCapability;
+        }
     }
+
+    /// <summary>
+    /// The flows whose <c>.Emit&lt;T&gt;()</c> produces one event, by business identity.
+    /// </summary>
+    /// <remarks>
+    /// The inverse of each flow's <c>emits</c>, and worth writing down for the reason
+    /// <c>ManifestReview.ReviewEvents</c> exists: both ends of an event are flows, usually in
+    /// different files, and this document is the first place they are together. Until this
+    /// line existed that review read an array nothing wrote, so its orphan-event finding
+    /// could not fire on any manifest FlowX produced — the same shape of defect
+    /// <c>FLOWX-DIFF-015</c> was, one consumer over.
+    /// </remarks>
+    private static IEnumerable<string> Producers(IEnumerable<FlowModel> flows, string evt) => flows
+        .Where(f => f.AllSteps.Any(s =>
+            s.Kind == StepKindModel.Emit &&
+            string.Equals(s.EventType, evt, System.StringComparison.Ordinal)))
+        .Select(f => f.FlowId);
+
+    /// <summary>
+    /// The flows in this application a <c>Bus</c> trigger starts from one event.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <c>[BusTrigger("invoice.requested")]</c> names the topic it drains, and a topic in
+    /// identity form is the event. So a subscriber inside the same build is a fact the
+    /// compiler already reads — it writes it as <c>trigger.topic</c> — and the only thing
+    /// missing was the index by event.
+    /// </para>
+    /// <para>
+    /// <strong>Scoped to events this application also emits, because the catalogue is.</strong>
+    /// An event only consumed here is another build's to describe: adding an entry for it
+    /// would mean publishing a <c>schemaVersion</c> for a contract this compilation never
+    /// saw, which is the invented value <c>ADR-0017</c>'s <c>F2</c> refuses. A consumer
+    /// wanting the whole topology reads both manifests, which is the shape a topology
+    /// actually has.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<string> Consumers(
+        IReadOnlyList<FlowTriggersModel>? triggers, string evt) =>
+        (triggers ?? (IReadOnlyList<FlowTriggersModel>)System.Array.Empty<FlowTriggersModel>())
+            .Where(f => f.Triggers.Any(t =>
+                string.Equals(t.Kind, "Bus", System.StringComparison.Ordinal) &&
+                string.Equals(t.Topic, evt, System.StringComparison.Ordinal)))
+            .Select(f => f.FlowId);
+
+    /// <summary>Writes a sorted, deduplicated identity array, or nothing when it is empty.</summary>
+    /// <remarks>
+    /// Omitted rather than emitted empty, on <see cref="WriteSensitive"/>'s grounds and not
+    /// <see cref="WriteErrors"/>'s: there is no third state here. The compiler either found a
+    /// flow at that end of the event or there is none in this application, and an empty array
+    /// in every entry would be noise in every <c>flowx diff</c>.
+    /// </remarks>
+    private static void WriteIdentities(JsonWriter writer, string name, IEnumerable<string> identities)
+    {
+        var ordered = identities
+            .Distinct(System.StringComparer.Ordinal)
+            .OrderBy(i => i, System.StringComparer.Ordinal)
+            .ToList();
+
+        if (ordered.Count == 0)
+        {
+            return;
+        }
+
+        writer.PropertyName(name);
+        writer.OpenArray();
+
+        foreach (var identity in ordered)
+        {
+            writer.Value(identity);
+        }
+
+        writer.CloseArray();
+    }
+
+    /// <summary>
+    /// The version this event's contract declares, or <see cref="EventSchemaVersion"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The catalogue entry is the contract's, not the call site's.</strong> Every
+    /// <c>.Emit&lt;T&gt;()</c> of one contract reads the same attribute off the same type, so
+    /// the versions agree by construction; the ordinal sort is what makes the pick
+    /// deterministic in the one shape that could disagree — two contracts whose type names
+    /// yield the same identity — rather than depending on which flow the compilation walked
+    /// first. The manifest is compared byte for byte across builds, so "whichever came out of
+    /// the enumerator" is not an option here.
+    /// </para>
+    /// <para>
+    /// ADR-0017 F2's requirement is that this value be read from the compilation, and this is
+    /// where that is true of the manifest. <c>FlowEmitter</c> resolves the same field for the
+    /// outbox row, so the document and the wire carry one number.
+    /// </para>
+    /// </remarks>
+    private static string VersionOf(IEnumerable<FlowModel> flows, string evt) => flows
+        .SelectMany(f => f.AllSteps)
+        .Where(s =>
+            s.Kind == StepKindModel.Emit &&
+            string.Equals(s.EventType, evt, System.StringComparison.Ordinal) &&
+            s.EventSchemaVersion != null)
+        .Select(s => s.EventSchemaVersion!)
+        .OrderBy(v => v, System.StringComparer.Ordinal)
+        .FirstOrDefault() ?? EventSchemaVersion;
 
     private static IEnumerable<string> CollectEvents(IEnumerable<FlowModel> flows) => flows
         .SelectMany(f => f.AllSteps)

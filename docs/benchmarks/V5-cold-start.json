@@ -1,0 +1,69 @@
+{
+  "criterion": "V5",
+  "what": "Process start to the first successful response on a served flow endpoint, for the NativeAOT-published reference sample.",
+  "subject": {
+    "sample": "samples/ecommerce/Ecommerce.csproj",
+    "endpoint": "POST /api/v1/orders",
+    "publishMode": "NativeAOT",
+    "publishCommand": "dotnet publish samples/ecommerce/Ecommerce.csproj --configuration Release --runtime linux-x64 --self-contained /p:TrimmerSingleWarn=false --output .artifacts/coldstart-aot",
+    "binary": ".artifacts/coldstart-aot/Ecommerce",
+    "binaryBytes": 18910528,
+    "publishDirectoryBytes": 59890646,
+    "publishSeconds": 6.6
+  },
+  "ceilingMs": 200,
+  "judgedOn": "flow.firstResponse p99",
+  "judgedValueMs": 102.172,
+  "marginFactor": 1.96,
+  "verdict": "MET",
+  "phases": [
+    {
+      "name": "process.listening",
+      "unit": "ms",
+      "runs": 30,
+      "mean": 57.248,
+      "min": 47.53,
+      "p50": 52.564,
+      "p95": 75.737,
+      "p99": 91.433,
+      "max": 91.433
+    },
+    {
+      "name": "flow.firstResponse",
+      "unit": "ms",
+      "runs": 30,
+      "mean": 68.127,
+      "min": 57.687,
+      "p50": 63.03,
+      "p95": 86.687,
+      "p99": 102.172,
+      "max": 102.172
+    },
+    {
+      "name": "rss.atFirstResponse",
+      "unit": "KiB",
+      "runs": 30,
+      "mean": 36258.133,
+      "min": 35832,
+      "p50": 36240,
+      "p95": 36676,
+      "p99": 36676,
+      "max": 36676
+    }
+  ],
+  "run": {
+    "measured": 30,
+    "discardedWarmups": 3,
+    "firstStartAfterPublishMs": 117.7,
+    "pollIntervalMs": 1,
+    "timeoutSeconds": 30
+  },
+  "machine": {
+    "processorCount": 4,
+    "os": "Ubuntu 24.04.4 LTS",
+    "architecture": "X64",
+    "dotnet": ".NET 10.0.10",
+    "shared": true,
+    "wallClockSeconds": 10.2
+  }
+}

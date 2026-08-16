@@ -163,6 +163,29 @@ internal sealed class SubstitutingDispatcher : IStepDispatcher
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Substitutable under the <em>fallback's</em> id, which is what makes a degraded path
+    /// testable at all: a test that wants to see what a flow does when the rating service is
+    /// down substitutes the primary to fail, and one that wants to see what happens when the
+    /// degraded mode is down too has to be able to reach the second capability by name.
+    /// </remarks>
+    public ValueTask<StepOutcome> ExecuteFallbackAsync(
+        int stepIndex, FlowContext ctx, CancellationToken ct)
+    {
+        var fallback = _plan.Graph[stepIndex].StepPolicy.FallbackCapability;
+
+        // The engine asks only for a step whose resolved policy carries one, so the descriptor
+        // is present. Named defensively rather than dereferenced, for CompensateAsync's reason:
+        // a plan and a dispatcher from different builds should fail with something a reader can
+        // act on rather than with a null reference.
+        Record(FlowTestEntryKind.Fallback, stepIndex, fallback?.Id ?? "fallback");
+
+        return _scope.TryTake(fallback?.Id, out var substitute)
+            ? substitute(ctx, ct)
+            : _inner.ExecuteFallbackAsync(stepIndex, ctx, ct);
+    }
+
+    /// <inheritdoc />
     public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
     {
         var compensation = _plan.Graph[stepIndex].Compensation;
@@ -264,6 +287,9 @@ internal sealed class SubstitutingDispatcher : IStepDispatcher
 
     /// <inheritdoc />
     public JournalPayload DescribeInput(object? input) => _inner.DescribeInput(input);
+
+    /// <inheritdoc />
+    public ValidationOutcome Validate(int stepIndex, FlowContext ctx) => _inner.Validate(stepIndex, ctx);
 
     /// <inheritdoc />
     public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>

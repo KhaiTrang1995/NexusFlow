@@ -261,6 +261,19 @@ internal sealed class TransferHarness
             return ValueTask.FromResult(StepOutcome.Failed(error));
         }
 
+        /// <inheritdoc />
+        /// <remarks>
+        /// Forwarded rather than left to the interface's default. A decorator that omits a
+        /// member answers for the dispatcher it wraps and turns the feature behind it off
+        /// without failing anything, which is the whole reason a fitness test walks these.
+        /// Through the interface, because this flow declares no capability fallback and the
+        /// generator emits the member only where one is declared — so what is forwarded to is
+        /// the default, and the default is the throw that says the plan and the dispatcher came
+        /// from different builds.
+        /// </remarks>
+        public ValueTask<StepOutcome> ExecuteFallbackAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
+            => ((IStepDispatcher)_inner).ExecuteFallbackAsync(stepIndex, ctx, ct);
+
         public ValueTask<StepOutcome> CompensateAsync(int stepIndex, FlowContext ctx, CancellationToken ct)
         {
             var step = ExecuteTransferFlow.Plan.Graph.Steps[stepIndex];
@@ -304,6 +317,10 @@ internal sealed class TransferHarness
         /// a cache key that reads empty makes every cached step look uncached. PLAN §9 item 12
         /// records this costing the repository twice, both times in a harness like this one.
         /// </remarks>
+        public ValidationOutcome Validate(int stepIndex, FlowContext ctx) =>
+            ((IStepDispatcher)_inner).Validate(stepIndex, ctx);
+
+        /// <inheritdoc cref="DescribeCacheKey" />
         public JournalPayload DescribeCacheKey(int stepIndex, FlowContext ctx) =>
             ((IStepDispatcher)_inner).DescribeCacheKey(stepIndex, ctx);
 

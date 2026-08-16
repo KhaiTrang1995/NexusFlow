@@ -117,8 +117,9 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers <see cref="IRateLimiterStore"/> and <see cref="IIdempotencyStore"/> over the
-    /// data source <see cref="AddFlowXPostgres"/> built.
+    /// Registers <see cref="IRateLimiterStore"/>, <see cref="IQuotaStore"/> and
+    /// <see cref="IIdempotencyStore"/> over the data source <see cref="AddFlowXPostgres"/>
+    /// built.
     /// </summary>
     /// <param name="services">The container being built.</param>
     /// <returns>The same collection, for chaining.</returns>
@@ -133,10 +134,12 @@ public static class ServiceCollectionExtensions
     /// a choice.
     /// </para>
     /// <para>
-    /// <strong>Requires migration 6.</strong> Both stores read tables <c>0006_policy_stores.sql</c>
-    /// creates, and a host that registers them against an unmigrated schema gets a refusal
-    /// naming the migration rather than a silent admission — which is the direction
-    /// <see cref="IRateLimiterStore"/>'s contract requires.
+    /// <strong>Requires migrations 6 and 15.</strong> Two of the stores read tables
+    /// <c>0006_policy_stores.sql</c> creates and the quota reads the one
+    /// <c>0015_quota_counter.sql</c> creates, and a host that registers them against an
+    /// unmigrated schema gets a refusal naming the migration rather than a silent admission —
+    /// which is the direction <see cref="IRateLimiterStore"/>'s contract requires and
+    /// <see cref="IQuotaStore"/>'s repeats.
     /// </para>
     /// </remarks>
     public static IServiceCollection AddFlowXPostgresPolicyStores(this IServiceCollection services)
@@ -148,6 +151,12 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IIdempotencyStore>(
             provider => new PostgresIdempotencyStore(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        // Stage 1's second store, registered with the first because a deployment that wants one
+        // shared budget wants the other in the same place. It reads quota_counter, which
+        // 0015_quota_counter.sql creates.
+        services.AddSingleton<IQuotaStore>(
+            provider => new PostgresQuotaStore(provider.GetRequiredService<NpgsqlDataSource>()));
 
         return services;
     }
@@ -291,6 +300,68 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers <see cref="PostgresSweepSignal"/>, so this node's change, timer and recovery
+    /// sweeps are woken by the database instead of waiting out their intervals.
+    /// </summary>
+    /// <param name="services">The container being built.</param>
+    /// <param name="directConnectionString">
+    /// How to reach PostgreSQL directly, bypassing any connection pooler.
+    /// </param>
+    /// <returns>The same collection, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="directConnectionString"/> is empty.</exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>It takes a second connection string, and that is the whole of the decision this
+    /// method asks a deployment to make.</strong> <c>LISTEN</c> is a property of a session: the
+    /// connection that issued it is the one notifications are delivered to, and it has to stay
+    /// open. A transaction pooler cannot carry that — PgBouncer in transaction mode hands the
+    /// server connection to the next client at the end of every transaction, so the subscription
+    /// either travels to a session nobody is reading or is discarded, and neither failure says
+    /// anything. It is the same shape as
+    /// <see cref="PostgresJournalOptions.SetSearchPathOnConnection"/>'s: the pooled endpoint
+    /// accepts everything and then does not do it.
+    /// </para>
+    /// <para>
+    /// <strong>A deployment that has only a pooled endpoint does not call this</strong>, and that
+    /// is a supported configuration rather than a degraded one — it is exactly what every release
+    /// before this one did. The sweeps keep their intervals, the change feed keeps its cursor and
+    /// the timer sweep keeps its query; what is lost is the acceleration, which is latency and
+    /// never an event. Passing a pooled connection string here would be the mistake: the host
+    /// would start, the listener would look connected, and the notifications would go nowhere.
+    /// </para>
+    /// <para>
+    /// <strong>Requires migrations 13 and 14</strong>, which are what announce on the three
+    /// channels <see cref="PostgresSweepSignal"/> subscribes to — 14 is the lease's, and a schema
+    /// that stops at 13 accelerates the other two sweeps and leaves takeover on its interval. Registering it against an older schema is
+    /// not an error and cannot be one — a listener with nothing announcing to it is a listener
+    /// that hears nothing, which is the same state a dropped connection puts it in, and the
+    /// intervals carry the deployment either way.
+    /// </para>
+    /// <para>
+    /// <strong>At <see cref="TenantIsolation.Schema"/> it covers every tenant.</strong> Each
+    /// tenant schema gets its own copy of the triggers when it is migrated, and they announce
+    /// under their own schema name; the listener accepts anything under
+    /// <see cref="TenantSchemaOptions.Prefix"/> as well as the control schema, because at that
+    /// level the sweeps fan out over the tenants and a wake for any of them is a wake for the
+    /// pass.
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddFlowXPostgresSweepSignal(
+        this IServiceCollection services,
+        string directConnectionString)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentException.ThrowIfNullOrWhiteSpace(directConnectionString);
+
+        services.AddSingleton<ISweepSignal>(provider => new PostgresSweepSignal(
+            directConnectionString,
+            provider.GetRequiredService<PostgresJournalOptions>()));
+
+        return services;
+    }
+
+    /// <summary>
     /// Builds a data source whose connections already resolve to the configured schema.
     /// </summary>
     /// <param name="connectionString">How to reach PostgreSQL.</param>
@@ -310,10 +381,16 @@ public static class ServiceCollectionExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentNullException.ThrowIfNull(options);
 
-        var settings = new NpgsqlConnectionStringBuilder(connectionString)
+        var settings = new NpgsqlConnectionStringBuilder(connectionString);
+
+        // Left alone when the deployment says it supplies the schema itself. A startup
+        // parameter is the shortest correct route on a direct connection and the one thing a
+        // transaction pooler cannot carry -- PostgresJournalOptions.SetSearchPathOnConnection
+        // records the two ways PgBouncer fails with it, both reproduced.
+        if (options.SetSearchPathOnConnection)
         {
-            SearchPath = options.Schema,
-        };
+            settings.SearchPath = options.Schema;
+        }
 
         return new NpgsqlDataSourceBuilder(settings.ConnectionString).Build();
     }

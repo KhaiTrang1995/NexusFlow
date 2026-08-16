@@ -4,11 +4,17 @@
 > "where is this project actually at?" — the [plan](PLAN.md) says what to build,
 > this says what is built.
 >
-> **Last updated:** 2026-08-01 · **Phase:** **P0 complete · P1 closed with one accepted
-> exception → P2 in progress: WP-62 is the only package with nothing built. WP-59 and
-> WP-64 landed whole; WP-50 landed its chaos rig without B7 or B8; WP-63 landed its
-> suspension half without its timer half; and WP-56 gained the broker plugin its own
-> ADR names as the condition for reopening** · **Commit:** see `git log`
+> **Last updated:** 2026-08-15 · **Phase:** **P0 complete · P1 closed with one accepted
+> exception · P2 complete — WP-62 closed 2026-08-15 by making its gate read the fourth
+> counter · the 2026-08-14/15 campaign shipped the cross-phase serverless-and-latency
+> range (WP-140…144), P4's policy catalogue to fourteen executing kinds (WP-77…83; WP-84
+> refused on ADR-0081's record), the V5 harness and its CI gate (WP-130), and seven of
+> eight manifest freeze criteria — F7, the bump itself, is the repository owner's call**
+> · **Commit:** see `git log`
+>
+> *The previous reading of this line — "P2 in progress: WP-62 is the only package with
+> nothing built" — was written 2026-08-01 and had been false in five directions by the
+> time it was replaced.*
 >
 > **Durable execution runs against a real database, and is not yet end to end.** WP-52 made
 > `FlowX.Runtime` read `ExecutionProfile`: a `Durable` flow journals one row per
@@ -24,9 +30,12 @@
 > effect has happened and its commit has not, against a shared PostgreSQL. At **10 000
 > flows per arm and 97 kills per arm** it recorded **0 duplicate effects against the
 > guarantee, 0 lost instances, 0 orphan effects and 0 instances run by two live nodes** —
-> QR2's two correctness clauses, at QR2's own scale. **It runs on demand and nothing runs it
-> in CI**, so those clauses are *measured*, not *enforced by a check that can fail*; putting
-> the run on a nightly schedule is WP-62 and is not started. Record:
+> QR2's two correctness clauses, at QR2's own scale. *This paragraph said "it runs on demand
+> and nothing runs it in CI … WP-62 … is not started" — stale twice over when re-read on
+> 2026-08-14: `chaos.yml` had been running the rig nightly and gating on the counters for
+> some time, and the one counter its checker never read (`instancesResumedByMoreThanOneNode`
+> — a double takeover was a PASS) plus the rig's swallowed exit code were closed that day.
+> All four correctness counters now fail the job; timing is reported and never gated.* Record:
 > [docs/benchmarks/QR2-chaos.md](docs/benchmarks/QR2-chaos.md).
 >
 > **A durable flow now writes what it did, and a durable build proves it can.** WP-59 shipped
@@ -37,7 +46,7 @@
 > stops being NULL on every row. **No second exit from a payload was opened**: the writer
 > composes no document, so `JournalPayload.ToJson()` is still the one place redaction and the
 > new `schemaVersion` stamp happen. See
-> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
+> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-and-b8-measured-on-demand-b7-measurable-but-not-judged).
 >
 > **What is still missing is not small:** `AwaitSignal` and durable suspension (WP-63),
 > QR2 in CI (WP-62), and — the one that matters most for a claim about
@@ -48,9 +57,13 @@
 > deliverable row: the rig, not `JournalBenchmarks`. *`FLOWX1006` (WP-59) was the fourth
 > entry on this list and expired on 2026-08-01.* A journal has been made correct without
 > being made fast. See
-> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all).
+> [§5d](#5d-p2--durable-execution--nearly-complete-qr2-and-b8-measured-on-demand-b7-measurable-but-not-judged).
 >
-> **Build:** 0 warnings, 0 errors · **Tests:** **2587/2587 passing across 19 assemblies**
+> **Build:** 0 warnings, 0 errors · **Tests:** **3854 passing, 0 failed, 70 skipped across
+> 30 assemblies** (re-measured 2026-08-15 on the merged tree, live PostgreSQL + PgBouncer +
+> Redis; the 70 skips are the three broker suites whose brokers were not standing on that
+> machine — CI stands all of them up. *This line read 2587/2587 across 19 assemblies,
+> measured 2026-08-01*)
 > (a large share against a live PostgreSQL 16.13 and Redis 7.0.15; **0 failed, 0 skipped**).
 > *This read **2004**, the count before the timer half, the manifest's wait, the 202 shape, three policy rules, the QR2 nightly and the telemetry seam merged. The figure here is
 > re-measured on the merged tree — `dotnet test FlowX.slnx -c Release` with both stores
@@ -139,6 +152,102 @@ What changed is that it is no longer tracked as a blocker.*
       **No row below may be read as gated by B1, B3 or B12 until this job is green or its
       remaining failures are individually accepted with a recorded reason.**
       See [benchmarks/README §5.2](docs/benchmarks/README.md)
+- [x] **B-5 · ~~Tenant isolation does not survive a transaction-pooling proxy.~~ FIXED 2026-08-14.**
+      **Verified 2026-08-14 against PgBouncer 1.22 in front of PostgreSQL 16** — this is a
+      reproduction, not a review finding. `TenantScope` binds the tenant with
+      `set_config('flowx.tenant_id', @tenant, false)`, session-scoped, once per connection
+      open. At `default_pool_size = 1`: client A binds `tenant-A`, client B binds `tenant-B`,
+      **and A's next statement reads `tenant-B`**. The same three steps direct to PostgreSQL
+      return empty, which is correct — so this is the proxy breaking the adapter's assumption,
+      not PostgreSQL.
+      *Why the assumption was reasonable and is still wrong:* the argument written at the
+      declaration is that a scoped journal rebinds on every open, so a pooled connection
+      cannot carry one execution's tenant into the next. True of Npgsql's pool, where a client
+      connection **is** a server session. False of PgBouncer in transaction mode, where one
+      server connection is shared between clients and consecutive statements from one client
+      can land on different ones.
+      **This is a cross-tenant read.** It is a blocker rather than a §9 item because
+      [28 §4.1](docs/28-Azure-Hosting.md#41-the-connection-ceiling--the-one-that-bites) makes
+      transaction pooling *mandatory* above a few replicas, so the two documents together
+      currently recommend a configuration that is not safe. 28 §4.1 now says so.
+      **Not fixed in the commit that found it, on purpose:** the fix makes the binding
+      transaction-local and issues it in the same transaction as the statement, which changes
+      the execution path of a durable store and has to be proven by the journal and tenant
+      conformance suites, not patched in beside a documentation change.
+      **The fix, and what proves it.** The binding is now `set_config(…, true)` —
+      transaction-local — issued inside a transaction the scoped acquire opens, and
+      `TenantScope.ApplyAsync` takes the `NpgsqlTransaction` rather than the connection so a
+      bind with nothing to belong to cannot be written. A `ScopedConnection` carries the
+      connection and that transaction, because Npgsql exposes no way to reach a connection's
+      transaction afterwards and the commit has to be reachable. **An unscoped deployment
+      opens no transaction and pays nothing** — its single-statement reads cost exactly what
+      they did.
+      Re-run of the reproduction on a clean pooled connection: A binds, B binds, and the next
+      statement reads **`<EMPTY>`** where it read `tenant-B` before. Inside its own
+      transaction the work still sees `tenant-A`, so the binding was not merely broken.
+      **246/246** `FlowX.Postgres.Tests` pass against a direct connection, including the
+      journal, lease and tenant conformance suites.
+      **The regression test this owed now runs, and it caught a defect in itself first.**
+      `PooledTenantIsolationTests` migrates a fixed schema, puts it on the endpoint's role
+      because a role default is the only route to a schema a shared server session carries,
+      and runs both tenants **concurrently** against `FLOWX_POSTGRES_POOLED_CONNECTION`.
+      The concurrency is the point: the first draft asked the two tenants' questions one
+      after another and **passed against the defective binding**, because a binding that
+      outlives its transaction can only be read by somebody else if somebody else runs in
+      between. Falsified properly on the second draft — the pre-fix shape restored as a
+      *compiling* mutation fails it on round 0 with the cross-tenant read; restored, it
+      passes three consecutive runs. **249/249 Postgres tests, 0 skipped**, against
+      PgBouncer 1.22 in `pool_mode = transaction` at `default_pool_size = 1`.
+- [ ] **B-6 · FlowX cannot reach its schema through a transaction-pooling proxy.**
+      **Reproduced 2026-08-14 against PgBouncer 1.22 and PostgreSQL 16**, while writing the
+      regression test B-5 owed. The adapter selects its schema with Npgsql's `SearchPath`,
+      which travels as a PostgreSQL **startup parameter**, and there are only two outcomes:
+      PgBouncer refuses the connection with `08P01: unsupported startup parameter:
+      search_path`, or — with the documented remedy `ignore_startup_parameters = search_path`
+      — it accepts the connection and **discards the schema**, after which every statement
+      answers `42P01: relation "flow_instance" does not exist`.
+      **The second is the dangerous one, because the application starts.**
+      *Why it is a blocker and not a §9 row:* [28 §4.1](docs/28-Azure-Hosting.md#41-the-connection-ceiling--the-one-that-bites)
+      made PgBouncer mandatory above a few replicas, so the deployment guidance and the
+      adapter contradicted each other. 28 §4.1 now says so and no longer requires it.
+      **Sized, not started.** This is not the journal's to fix: `SearchPath` is set in exactly
+      one place, `BuildDataSource`, and **sixteen** store classes rely on it — none qualifies
+      its SQL with a schema. So the fix is plugin-wide and is one of two shapes: qualify every
+      statement with a validated schema identifier, or set `search_path` per transaction,
+      which needs a transaction on paths that have none today. Either is a work package with
+      the journal, lease, timer and tenant conformance suites as its acceptance.
+      **Half of it is now fixed, and the half that is not is inherent.** A server-side default
+      survives pooling because it is applied when the *server* connection is made rather than
+      sent by the client — verified through PgBouncer in transaction mode with no startup
+      parameter at all, `search_path=probe_schema` on the far side. So
+      `PostgresJournalOptions.SetSearchPathOnConnection` (default `true`, nothing changes for
+      a direct deployment) lets a pooled one say it supplies the schema itself with
+      `ALTER ROLE <role> SET search_path = <schema>`, and the adapter then sends no startup
+      parameter for a pooler to refuse. The migrating role needs the same default.
+      **What is not fixed cannot be:** `TenantIsolation.Schema` chooses the schema per tenant
+      as the connection opens, and no server-side default expresses a value that varies per
+      client. Schema-per-tenant behind a transaction pooler stays unsupported, and this row
+      stays open to say so.
+      249/249 Postgres tests pass; two new unit tests pin both sides of the switch, and
+      `PooledTenantIsolationTests` now exercises the `false` side against a real pooler
+      rather than only asserting the option's value.
+      See [PLAN open item 21](PLAN.md#9-open-items-blocking-the-plan)
+- [x] **B-7 · ~~The three-role topology was drawn and could not be configured.~~ FIXED 2026-08-14.**
+      `docs/18-Cloud-Native.md §1` and `docs/28-Azure-Hosting.md §3.1` both split a deployment
+      into `api`, `worker` and `scheduler` roles selected by **`FLOWX_TRIGGERS`** — a variable
+      that appeared **four times in documents and zero times in the source**. Every
+      `Flow*Scan.IsEnabled` derived from *capability* (`_durability.CanScan`,
+      `_subscriptions.Count > 0`), so a host given a journal ran every sweep it was capable of
+      and no host could be told to run fewer. Phase 1 of 28 §7 could not have been reached, and
+      `Dispatched` (ADR-0077) could not be either — turning the sweeps off is its precondition.
+      **`FlowXOptions.Sweeps`**, a flags enum defaulting to `All`, now says what a host *should*
+      do while each scan still says what it *can*; the two are kept apart so a missing journal
+      and a deliberate opt-out are not one state in a log. Six services gate on it in their
+      constructor, in this file's style of keeping the value rather than the options object.
+      **Proved rather than reviewed:** `HostSweepGateTests` reads the compiled IL — through the
+      async state machine, because the first version read the stub and reported six correctly
+      gated services as ungated — and a **compiling** mutation removing one service's gate
+      turns it red. 9 semantics tests, 28/28 test projects green, build 0 warnings.
 - [x] **B-3 · ~~Delete a stray tooling-prefixed branch from the remote.~~ RESOLVED.**
       Gone from the remote. History scan is clean: no commit in any branch has
       bot authorship, a generated-by footer, or a signature. *The branch name itself
@@ -149,8 +258,22 @@ What changed is that it is no longer tracked as a blocker.*
 
 ## 1. Documentation
 
-- [x] 20 specification documents, `docs/01` – `docs/20`
-- [~] **20 ADRs** with trade-offs stated, `ADR-0001` – `ADR-0020`. *This line said "15 ADRs
+- [x] **29 specification documents**, `docs/01` – `docs/29`. *This line said "20 … `docs/01` –
+      `docs/20`" and stayed at twenty through nine further documents. The last four are
+      [26](docs/26-CRM-Sample.md) and [27](docs/27-CRM-Reference-Architecture.md) for the CRM,
+      [28 — Azure Hosting](docs/28-Azure-Hosting.md), and
+      [29 — From Zero to Production](docs/29-From-Zero-To-Production.md), which is the
+      adoption path: the learning ladder, DevSecOps on GitHub, and shipping.*
+- [~] **70 ADRs**, and **none is still `Proposed`** — ADR-0014 was decided on 2026-08-10.
+      *The count below said "20" and the sentence after it named ADR-0014 as the only
+      Proposed record; both were true when written and neither was maintained. The `[~]`
+      survives for the template defect named at the end of this entry, not for the count.*
+      The two most recent are [ADR-0076](docs/adr/ADR-0076-a-host-is-chosen-against-a-capability-contract.md),
+      which scores a host against a capability contract rather than naming a platform, and
+      [ADR-0077](docs/adr/ADR-0077-a-flow-is-dispatched-in-one-of-two-modes.md), which amends
+      it: externalised triggers make a FaaS core viable at ~20–50 ms per step, which is
+      ~4–5× on a Durable step and ~10⁴× on an Ephemeral one, so **`Hosted` and `Dispatched`
+      are both supported and `Dispatched` is Durable-only**. *Original line follows.* "15 ADRs
       … ADR-0014 and ADR-0015 are **Proposed**" and was wrong twice: ADR-0016 was uncounted,
       and ADR-0015 became **Accepted** at WP-53 — which this file records correctly 800 lines
       further down. A count and a status, both wrong, both ticked `[x]`. It then read "16"
@@ -588,7 +711,7 @@ and returns an RFC 7807 body for a rejected one. **What was missing was the gate
 `templates/README.md` called `verify.sh` "the acceptance test, and what CI should run", and
 CI never ran it — so the template could have rotted silently at any point. A `template` job
 now runs it. `docs/19-SDK.md` and `docs/03 §12` are corrected. See
-[§5d](#5d-p2--durable-execution--nearly-complete-qr2-measured-on-demand-b7-and-b8-not-at-all) and [PLAN §5](PLAN.md#5-p2--durable-execution).
+[§5d](#5d-p2--durable-execution--nearly-complete-qr2-and-b8-measured-on-demand-b7-measurable-but-not-judged) and [PLAN §5](PLAN.md#5-p2--durable-execution).
 
 - [x] **WP-15** The branching DSL — **`When` / `Otherwise` done** through builder, model,
       analysis, emission, graph and engine. A conditional compiles into the *same flat
@@ -1061,7 +1184,28 @@ Three more surfaced while getting the suite green:
 
 ---
 
-## 5d. P2 · Durable execution — **nearly complete; QR2 measured on demand, B7 and B8 not at all**
+## 5d. P2 · Durable execution — **nearly complete; QR2 and B8 measured on demand, B7 measurable but not judged**
+
+> **This heading said "B7 and B8 not at all" until 2026-08-14, and half of it stopped being
+> true that day.** `tests/FlowX.Durability.Bench` now prices both against a real PostgreSQL,
+> and `scripts/check-durability-latency.py` judges the run —
+> [B7-B8-durability.md](docs/benchmarks/B7-B8-durability.md) is the record.
+>
+> **B8 is MET**: p99 **3.634 ms** against a budget of 8 ms, over 2 000 rehydrations at
+> history depth 20, measuring `DurableExecution.ResumeAsync` — the fence *and* the frontier
+> read, which is the verb a recovering node actually calls.
+>
+> **B7 is not judged, and that is a third state rather than a failure.** The budget is
+> `15 ms @ 5 000 commits/s/node`, and a rate-qualified budget cannot be met by a machine that
+> cannot offer the rate: the recorded four-core run saturates at **4 103 commits/s**, so its
+> latency describes a queue. Store-side p99 at that rate was **14.146 ms** — inside the
+> ceiling, and not a pass. Judging B7 needs a run on hardware that can offer 5 000/s, and
+> [PLAN open item 23](PLAN.md#9-open-items-blocking-the-plan) carries it.
+>
+> The verdict logic is merge-gated even though the measurement is not: `durability-self-test`
+> in `performance.yml` runs nine fabricated verdicts on every pull request, two of them
+> green, so the one suppression in the checker — a B7 latency breach downgraded when the rate
+> was missed — cannot be widened without a job going red.
 
 Work packages in [PLAN.md §5](PLAN.md#5-p2--durable-execution); the design they are held
 to is [ADR-0015](docs/adr/ADR-0015-journal-schema-and-durable-execution.md), **Accepted at
@@ -1642,12 +1786,17 @@ executes it, not when something publishes it.*
 | Broker publication | **runs** | four implementations — Redis Streams, RabbitMQ, Azure Service Bus, Kafka — held to one unmodified `PublisherConformance`, by four ordering mechanisms with nothing in common |
 | HTTP trigger | **runs** | `EndpointEmitter`; `202` for a flow that suspends; generated signal routes |
 | Schedule trigger | **runs** | `ScheduleEmitter`; one instance per occurrence across a fleet, no leader |
-| **Policy engine · all eight kinds** | **runs** | stage 4's four plus `RateLimit`, `Idempotency`, `Cache`, `Audit`. `FLOWX1032` deleted with the gap it reported |
+| **Policy engine · fourteen kinds** | **runs** | *twelve until WP-83 (2026-08-15) added `Consent` and reclassified `Authorize` as derived — the stance machinery is the policy, and a declarable twin was refused as a second reading; `Batch` stays undeclarable on [ADR-0081](docs/adr/ADR-0081-a-batch-has-no-unit-the-engine-can-name.md)'s five pieces* — *ten until WP-81/82 (2026-08-15) added `Validate` (build-time-generated checks from DataAnnotations, field errors as RFC 7807, a `[Sensitive]` value structurally unable to reach a message) and `Quota` (fixed window on an absolute grid, tenant-fair by key, `Forbidden` not `Unavailable`)* — *WP-80 (2026-08-15) completed `Fallback`'s capability half: `ExecuteFallbackAsync` on the dispatcher (five decorators caught silently inheriting its default by the fitness gate), journal identity via the existing `capability_id`, manifest `fallback:` field, and a live resume-path defect fixed — a degraded step no longer re-enters the unwind stack on resume* — *this row said eight until WP-78/79 (2026-08-14) added `Fallback` (constant-valued; a degraded step commits its own journal row and registers no compensation) and `Hedge` (races inside retry, one winner commits; FLOWX1051 refuses it over a non-idempotent capability)* — plus stage 4's four plus `RateLimit`, `Idempotency`, `Cache`, `Audit`. `FLOWX1032` deleted with the gap it reported |
 | **Authorisation** | **runs** | `Authenticated` and `Permission` refuse; `Public` and `Internal` permit by construction; `Policy` refused at build time (`FLOWX1037`). A fail-open where `Policy` permitted everybody is fixed |
-| Manifest | **runs** | a build artifact, byte-pinned, diffed by 40-odd rules |
+| Manifest | **runs — six of eight freeze criteria hold since 2026-08-15** | a build artifact, byte-pinned, diffed by 40-odd rules; four unproduced fields gained producers, eleven were struck per ADR-0017 §1's own convention, `extensions` is exercised rather than trusted, and `ManifestIsComplete` covers all four nouns non-vacuously. **F2 closed 2026-08-15 the same day**: `[EventSchema]` on the contract type, one reading feeding manifest and outbox alike, `FLOWX-DIFF-020`'s major-bump half fired for the first time ever. **Seven of eight hold; what remains is F7 — the bump itself, the repository owner's call** |
 | Telemetry · traces and metrics | **runs** | 11 of 13 metrics, 10 of 13 attributes; B6's allocation half gated |
 | **Telemetry · logs** | **runs** | `FlowXLog` over `DiagnosticSource`; `src/FlowX.Logging` bridges to `ILogger` without moving `AbstractionsHasNoDependencies` |
 | **Triggers** | **8 of 8 bound** | HTTP, Schedule, Bus, Change, Agent, Manual, Cli, Stream |
+| **Push admission** | **runs** | added 2026-08-14 (WP-140): `FlowBusScan.AdmitAsync` / `FlowStreamScan.AdmitAsync` decide and do not settle, so a push host (Functions, KEDA) settles by the returned disposition; pull path unchanged and proven row-for-row against a real Postgres; `flowx_trigger_admitted_total` finally has its producer at this one seam |
+| **Functions host** | **runs on the real local runtime** | added 2026-08-14 (WP-141): `FlowX.Functions` emits `[Function]` entry points from the same `TriggerReader` reading the compiler uses (source-linked, asserted single); Http/Schedule/Bus/Change/Agent bound, Stream deliberately not (a closed window needs state a scaled-to-zero host lacks); generated methods invoked with the platform's argument types against a real Postgres, **and since 2026-08-15 the real local runtime too**: Core Tools 4.6.0 from its GitHub release, all three trigger arms green end to end against the Service Bus emulator and Azurite. The suite also caught the Functions HTTP surface missing the `Idempotency-Key` contract; `FlowPushSeams.HttpAsync` now refuses |
+| **Recovery wake-up** | **runs** | added 2026-08-14 (WP-143): migration `0014` announces the schema's earliest live lease expiry; the recovery sweep arms to wake at it, poll stays the backstop. Chaos, matched pair at recovery capacity 32: takeover p99 **52.5 s → 31.2 s** (before-commit arm), `LeaseTtl` + 1.2 s, correctness counters all zero |
+| **Admission bounds** | **runs** | added 2026-08-14 (WP-144): `FlowAdmissionGate`, CAS, sheds instead of queueing; default unlimited and allocation-free; Bus requeues, Stream holds, HTTP 429 + `Retry-After`; `flowx_trigger_rejected_total` has its first producer and a shed never counts as an admission |
+| **Sweep wake-up** | **runs** | added 2026-08-14 (WP-142): migration `0013` NOTIFYs on outbox staging and parked wakes; `PostgresSweepSignal` LISTENs on the direct connection and completes the sweep's wait early — poll stays as the correctness backstop, absent signal is byte-for-byte the old behaviour. Chaos rig re-run green over the new triggers: 0 duplicates against the guarantee, 0 lost, 0 orphans, both arms |
 | **Multi-tenancy** | **runs** | resolution at admission, `Row` and `Schema` isolation, six of six fairness mechanisms. `Database` refused as a topology, not a level ([ADR-0051](docs/adr/ADR-0051-database-isolation-is-a-topology-not-a-runtime-level.md)) |
 | **Stream engine** | **runs** | tumbling event-time windows, an observed watermark and a checkpointed source position; window state is not journaled because a closed window derives the instance id it starts ([ADR-0055](docs/adr/ADR-0055-a-window-names-the-instance-it-starts.md)). Sliding, session and global windows are refused by `FLOWX1042` |
 | **AI surface / MCP** | **runs** | `plugins/FlowX.Mcp`; `tools/list` is a projection of the manifest and `tools/call` meets the same authorisation stance HTTP does |
@@ -1680,18 +1829,19 @@ everything else.*
 
 | # | Criterion | Satisfied? | Gated by a check that can fail? |
 |---|---|---|---|
-| **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **yes** | **no** — a review. Endpoint generation cut the sample from 12 lines to 2 and no assertion noticed the number move |
+| **V1** | ≤ 3 files, ≤ 60 lines for a 4-step flow | **yes** — 3 files, 29 of 60 lines, root costs zero | **yes** — `UseCaseCostTests`, four facts incl. the anti-vacuity check. *This row's gate cell said "no — a review"* |
 | **V2** | HTTP → Kafka, zero logic edits | **partly** — four transports over one capability chain in `samples/event-driven`, each costing one adapter step; **not Kafka**, which needs a broker | **yes, over the transports that exist** — `TransportEquivalenceTests` runs one reference through HTTP, bus, change and cron and asserts on journal rows |
 | **V3** | p99 ≤ 5 µs, ≤ 1 alloc/step | **yes** — 172.3 ns / 0 B | **yes.** The only one of the eight |
 | **V4** | durable checkpoint p99 ≤ 15 ms @ 5 000 flows/s | **unknown** — a journal exists since WP-53; nothing times it. **WP-50 shipping did not move this row:** its rig times *resume* after a `SIGKILL`, not the *checkpoint commit* this criterion names | no — WP-50's unbuilt half |
-| **V5** | cold start ≤ 200 ms, NativeAOT | **unknown** — the binary links and serves; nothing times it | no — P9 |
-| **V6** | build overhead ≤ 8 % | **no** — +67.1 % | **no, and deliberately.** The job that measures it is advisory by an ADR-0014 commitment; the blocking gate is relative |
+| **V5** | cold start ≤ 200 ms, NativeAOT | **yes on advisory hardware** — p50 63.0 ms / p99 102.2 ms to first flow response, AOT, 30 starts ([V5-cold-start.md](docs/benchmarks/V5-cold-start.md)). *This cell said "unknown — nothing times it"* | **yes, on p50** — the `aot` job re-measures the smoke-tested binary and `check-cold-start.py` fails the run over 200 ms; the tail is reported and not gated, since two same-day p99s spread 26 % |
+| **V6** | generator allocation ≤ 800,000 B/flow, ≤ 160,000 B/capability | **yes** — 138,657 per capability against a 160,000 ceiling since the 2026-08-15 SemanticModel-cache fix (*was 148,562*) | **yes** — `check-generator-cost.py` fails the run on a breach. *This row read "build overhead ≤ 8 % · no · +67.1 %" for four days after [ADR-0014](docs/adr/ADR-0014-derived-error-catalogue-vs-build-budget.md) replaced the ratio on 2026-08-10 and [01 §7](docs/01-Vision.md#7-measurable-success-criteria) moved with it. The +67.1 % measurement stays true of what it measured; it is no longer what V6 asks* |
 | **V7** | 100 % of flows, capabilities, **policies and events** in the manifest | **partly** — all four kinds are published, but a policy carries `kind` and `stage` and none of its parameters, and an event carries `type` and `schemaVersion` and no payload schema | partly — `ManifestIsComplete` covers what is published |
 | **V8** | mid-level engineer ships a flow in ≤ 2 h, n ≥ 10 | **not run** | no — P9 |
 
-**One of eight is gated.** Three more are satisfied or partly satisfied and enforced by
-nothing, which is the state that decays silently — V1 already moved without anything
-noticing.
+**Five of eight are gated** — V1, V3, V5 (on p50) and V6 outright, V2 over the transports that exist. *This
+line said one, and contradicted the V2 row three rows above it.* Two more are satisfied or
+partly satisfied and enforced by nothing, which is the state that decays silently — V1
+already moved without anything noticing.
 
 ---
 
@@ -1765,15 +1915,20 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | # | Quality goal | Enforced by |
 |---|---|---|
 | **Q1** | predictable low latency | `EngineAllocationTests` (hard zero) + B1/B2. **The only quality goal whose gate has ever failed a build** |
-| **Q2** | durable correctness | conformance suite vs real Postgres, lease, recovery scan. **The measure — p99 ≤ 15 ms — is still unmeasured.** *This cell added "and the scenario has never happened: nothing has killed a process". That expired on 2026-08-01:* WP-50's rig `SIGKILL`s worker processes and found **0 duplicates against the guarantee and 0 lost instances over 10 000 flows per arm**. **It is measured by a rig run on demand, not by a gate that can fail** |
+| **Q2** | durable correctness | conformance suite vs real Postgres, lease, recovery scan. **The measure — p99 ≤ 15 ms — is still unmeasured.** *This cell added "and the scenario has never happened: nothing has killed a process". That expired on 2026-08-01:* WP-50's rig `SIGKILL`s worker processes and found **0 duplicates against the guarantee and 0 lost instances over 10 000 flows per arm**. **Gated nightly since 2026-08-14's re-read**: `chaos.yml` fails on any of the four correctness counters — *this cell said "measured by a rig run on demand, not by a gate that can fail", which was stale about the schedule and right about the fourth counter, which the checker never read until that day* |
 | **Q3** | static knowability | `ManifestIsComplete`, `flowx diff`, the error catalogue. Same half-gap as V7 — policies and events are unchecked |
-| **Q4** | transport portability | **nothing.** One transport |
-| **Q5** | operational uniformity | **nothing.** No `ActivitySource`, no `Meter`, no exporter (P5) |
+| **Q4** | transport portability | `TransportEquivalenceTests` — one reference chain over four transports, asserted on journal rows. *This cell said "nothing. One transport"* |
+| **Q5** | operational uniformity | one `ActivitySource` and one `Meter`, both named `FlowX`; `TelemetryConformanceTests` pins the names, `TelemetryCostTests` pins B6's hard zero with no listener. An exporter is still the deployment's to wire. *This cell said "no `ActivitySource`, no `Meter`, no exporter"; two of those three expired* |
 | **Q6** | extensibility | `RuntimeDoesNotReferenceAnyPlugin` ✅; `PluginsPassConformance` **blocked**. `plugins/FlowX.Postgres` is the first outside implementation to push back on a contract |
 | **Q7** | startup and footprint | **nothing.** Same gap as V5 |
-| **Q8** | multi-tenant isolation | **nothing.** `CrossTenantAccessIsDenied` blocked on P4 and P3 |
+| **Q8** | multi-tenant isolation | `Healthcare.Tests.CrossTenantAccessTests` (the database refuses, not the runtime) and `PooledTenantIsolationTests` (it still refuses through a transaction pooler). The repository-wide `CrossTenantAccessIsDenied` stays blocked on P4 and P3's second transport — it is written over *every* trigger kind. *This cell said "nothing"* |
 
-### ADR inventory — 20 records, and which carry undischarged obligations
+### ADR inventory — the first twenty records, and which carry undischarged obligations
+
+**Sixty-eight records exist**; this table stops at 0020 and has since it was written. *Its
+heading said "20 records", which read as a count of the repository rather than of the table.*
+The index is [docs/adr/README.md](docs/adr/README.md); an obligation in a record above 0020
+is tracked where that record is cited, not here.
 
 | ADR | Status | Revisit trigger | Obligation this file or the plan is missing |
 |---|---|---|---|
@@ -1800,8 +1955,8 @@ and until 2026-07-31 they were named nowhere in this file. Q1–Q3 are *architec
 | **C1** .NET 10+/C# 14 | the SDK pin | ✅ |
 | **C2** NativeAOT | AOT job + `IsAotCompatible` analyzers | ✅ |
 | **C3** hosts in ASP.NET Core | nothing explicit — held by construction | — |
-| **C4** no 2-phase commit | nothing — held by design; the outbox that makes it correct is WP-56 | — |
-| **C5** OpenTelemetry only | vacuous: nothing emits telemetry (P5) | — |
+| **C4** no 2-phase commit | nothing — held by design; the outbox that makes it correct **shipped at WP-56** | — |
+| **C5** OpenTelemetry only | one BCL `ActivitySource` and one `Meter`, zero OpenTelemetry package references, `AbstractionsHasNoDependencies` keeping it so. *This cell said "vacuous: nothing emits telemetry"* | ✅ |
 | **C6** Apache-2.0, no copyleft | `DependencyLicencesAreCompatible` in `DependencyLicenceTests`, over the resolved transitive graph, against [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md). `Npgsql` vetted (PostgreSQL Licence, permissive); two build-time packages found not to be MIT | ✅ |
 | **C7** SemVer + 2-minor deprecation | `flowx diff` catches breaking changes; **nothing tracks the deprecation window** | partly |
 | **C8** documentation-first | convention. Held well; no gate | — |
